@@ -196,14 +196,26 @@ fn parse_url(src: &str) -> Option<ParsedUrl<'_>> {
 
 fn split_host_port(authority: &str) -> Option<(&str, Option<u16>)> {
     if authority.starts_with('[') {
-        let close = authority.find(']')?;
+        let Some(close) = authority.find(']') else {
+            return Some((authority, None));
+        };
         let host = &authority[..=close];
         let remainder = &authority[close + 1..];
         if remainder.is_empty() {
             return Some((host, None));
         }
-        let port = remainder.strip_prefix(':')?.parse::<u16>().ok()?;
-        return Some((host, Some(port)));
+        if let Some(candidate_port) = remainder.strip_prefix(':') {
+            if candidate_port.bytes().all(|b| b.is_ascii_digit()) {
+                let port = candidate_port
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|port| (1..=u16::MAX as u32).contains(port))
+                    .map(|port| port as u16);
+                return Some((host, port));
+            }
+        }
+        // A non-numeric suffix is not treated as a port by Android Uri.
+        return Some((authority, None));
     }
 
     if let Some((host, candidate_port)) = authority.rsplit_once(':') {
@@ -405,6 +417,18 @@ mod tests {
         assert_eq!(
             clean_url("https://[::1]:8443/a", true, &[]),
             "https://[::1]:8443/a"
+        );
+        assert_eq!(
+            clean_url("https://[::1]:0/a", true, &[]),
+            "https://%5B%3A%3A1%5D/a"
+        );
+        assert_eq!(
+            clean_url("https://[::1]:70000/a", true, &[]),
+            "https://%5B%3A%3A1%5D/a"
+        );
+        assert_eq!(
+            clean_url("https://[::1]:abc/a", true, &[]),
+            "https://%5B%3A%3A1%5D%3Aabc/a"
         );
     }
 
