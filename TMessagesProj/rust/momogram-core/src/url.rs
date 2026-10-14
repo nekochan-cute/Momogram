@@ -199,10 +199,17 @@ fn split_host_port(authority: &str) -> Option<(&str, Option<u16>)> {
     }
 
     if let Some((host, candidate_port)) = authority.rsplit_once(':') {
-        if !host.contains(':') {
-            if let Ok(port) = candidate_port.parse::<u16>() {
-                return Some((host, Some(port)));
-            }
+        if !host.contains(':') && candidate_port.bytes().all(|b| b.is_ascii_digit()) {
+            // Android Uri.findPortSeparator() separates any trailing numeric
+            // port (including an empty suffix after ':'), while cleanUrl only
+            // re-emits ports in 1..=65535. Invalid/out-of-range numeric ports
+            // are therefore dropped rather than treated as part of the host.
+            let port = candidate_port
+                .parse::<u32>()
+                .ok()
+                .filter(|port| (1..=u16::MAX as u32).contains(port))
+                .map(|port| port as u16);
+            return Some((host, port));
         }
     }
     Some((authority, None))
@@ -358,6 +365,22 @@ mod tests {
         assert_eq!(
             clean_url("https://twitter.com/a%2Fb+c", true, &[]),
             "https://twitter.com/a/b%2Bc"
+        );
+    }
+
+    #[test]
+    fn drops_numeric_ports_outside_android_cleaner_range() {
+        assert_eq!(
+            clean_url("https://example.com:0/a?x=1", true, &[]),
+            "https://example.com/a?x=1"
+        );
+        assert_eq!(
+            clean_url("https://example.com:70000/a?x=1", true, &[]),
+            "https://example.com/a?x=1"
+        );
+        assert_eq!(
+            clean_url("https://example.com:/a?x=1", true, &[]),
+            "https://example.com/a?x=1"
         );
     }
 
