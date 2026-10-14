@@ -56,7 +56,7 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
     let get = |name: &str| get_query_parameter(&query, name);
 
     let mut address = get("server").or_else(|| get("host")).unwrap_or_default();
-    if proxy_type != 2 && !address.is_empty() {
+    if proxy_type != 2 && check_host_for_punycode(&address) {
         if let Ok(ascii) = domain_to_ascii(&address) {
             address = ascii;
         }
@@ -89,6 +89,25 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
         password,
         secret,
     })
+}
+
+fn check_host_for_punycode(value: &str) -> bool {
+    let mut has_latin = false;
+    let mut has_non_latin = false;
+    for ch in value.chars() {
+        if ch == '.' || ch == '-' || ch == '/' || ch == '+' || ch.is_ascii_digit() {
+            continue;
+        }
+        if ch.is_ascii_alphabetic() {
+            has_latin = true;
+        } else {
+            has_non_latin = true;
+        }
+        if has_latin && has_non_latin {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn normalize_web_address(address: &str) -> String {
@@ -314,6 +333,25 @@ mod tests {
         ).unwrap();
         assert_eq!(proxy.user, "a b");
         assert_eq!(proxy.password, "x+y");
+    }
+
+    #[test]
+    fn non_web_proxy_keeps_ascii_case_without_mixed_script_punycode() {
+        let proxy = parse_proxy_uri("tg://socks?server=EXAMPLE.COM&port=1080").unwrap();
+        assert_eq!(proxy.address, "EXAMPLE.COM");
+    }
+
+    #[test]
+    fn non_web_proxy_keeps_pure_non_latin_host_like_legacy_code() {
+        let proxy = parse_proxy_uri("tg://socks?server=%E4%BE%8B%E3%81%88.%E3%83%86%E3%82%B9%E3%83%88&port=1080").unwrap();
+        assert_eq!(proxy.address, "例え.テスト");
+    }
+
+    #[test]
+    fn non_web_proxy_punycodes_mixed_latin_non_latin_host() {
+        let proxy = parse_proxy_uri("tg://socks?server=a%E4%BE%8B%E3%81%88.com&port=1080").unwrap();
+        assert!(proxy.address.is_ascii());
+        assert_ne!(proxy.address, "a例え.com");
     }
 
     #[test]
