@@ -134,3 +134,19 @@ jobs:
               exit 1
             fi
           done
+      - name: Generate APK checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          find TMessagesProj/build/outputs/apk -type f -name '*.apk' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > rust-core-apks.sha256
+      - name: Upload release APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: momogram-rust-core-apks
+          path: |
+            TMessagesProj/build/outputs/apk/**/*.apk
+            rust-core-apks.sha256
+          if-no-files-found: error
+          retention-days: 7
