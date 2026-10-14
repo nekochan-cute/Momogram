@@ -190,6 +190,14 @@ mod tests {
     }
 
     #[test]
+    fn all_embedded_targets_build() {
+        for target in 0..=5 {
+            convert(target, "測試").unwrap();
+        }
+        assert!(convert(6, "測試").is_err());
+    }
+
+    #[test]
     fn merge_order_and_longest_match_match_legacy_converter() {
         let mut dicts = DictSet::new();
         dicts.insert("first", parse_dictionary("A\tfirst\n"));
