@@ -66,12 +66,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
       - name: Install Android SDK and NDK
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
+          SDK_MANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDK_MANAGER" ]; then
+            SDK_MANAGER="$(find "$ANDROID_HOME" -type f -name sdkmanager -perm -u+x | head -n 1)"
+          fi
+          test -x "$SDK_MANAGER"
+          yes | "$SDK_MANAGER" --licenses >/dev/null || true
+          "$SDK_MANAGER" \
             'platforms;android-36' \
             'build-tools;36.0.0' \
             'cmake;3.22.1' \
