@@ -1,8 +1,17 @@
 # Momogram Rust core
 
-This crate is the migration target for Momogram logic that does not need direct Android UI access.
+This crate hosts Momogram logic that does not need direct Android UI access. Android code calls the `momogram_core` cdylib through a thin JNI bridge.
 
-The first migrated component is URL cleanup. Kotlin calls the Rust `cdylib` through JNI and falls back to the previous Kotlin implementation only when the native library cannot be loaded. The pure URL logic lives in `src/url.rs` so it can be tested independently from JNI.
+Migrated components currently include:
+
+- URL cleanup and tracking-query filtering
+- proxy URI parsing and WEB proxy validation
+- OpenCC conversion
+- string helpers used by Momogram
+- anti-spam/filter decision state
+- secret-chat backup binary/JSON serialization and AES-256-GCM/PBKDF2 crypto
+
+Android framework and database access remain in Kotlin/Java. Deterministic parsing, conversion, serialization, crypto, and state-machine logic live in Rust so they can be tested independently.
 
 ## Android build prerequisites
 
@@ -12,13 +21,14 @@ Install Rust and the Android targets:
 rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 ```
 
-The existing Mozilla Rust Android Gradle plugin builds `momogram_core` for all four Android ABIs and packages the generated shared libraries into the APK.
+The Mozilla Rust Android Gradle plugin builds `momogram_core` for all four Android ABIs. `:TMessagesProj:preBuild` depends on `:TMessagesProj:cargoBuild`, so normal Android builds package the Rust shared library automatically.
+
+The project uses NDK `27.2.12479018` and Android API 21 as the Rust minimum API level.
 
 ## Host tests
 
 ```sh
-cd TMessagesProj/rust/momogram-core
-cargo test
+cargo test --manifest-path TMessagesProj/rust/momogram-core/Cargo.toml --all-targets
 ```
 
-The JNI wrapper is deliberately thin. New migrations should keep Android framework interaction in Kotlin/Java and move deterministic parsing, filtering, serialization, cryptographic glue, and similar platform-independent logic into this crate.
+The CI workflow also cross-compiles the JNI library for all four Android ABIs and assembles the Android release variant.
