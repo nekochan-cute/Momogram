@@ -1,6 +1,5 @@
 package moe.hx030.momogram.helpers;
 
-import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 
@@ -24,32 +23,16 @@ import org.telegram.tgnet.TLRPC;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Locale;
 
-import javax.crypto.Cipher;
-import javax.crypto.SecretKey;
-import javax.crypto.SecretKeyFactory;
-import javax.crypto.spec.GCMParameterSpec;
-import javax.crypto.spec.PBEKeySpec;
-import javax.crypto.spec.SecretKeySpec;
+import moe.hx030.momogram.utils.RustCore;
 
 public class SecretChatBackupManager {
 
     private static final String TAG = "SecretChatBackupManager";
-    private static final String HEADER = "NXSCB";
-    private static final int VERSION = 4;
     public static final int FORMAT_BINARY = 0;
     public static final int FORMAT_JSON = 1;
-
-    private static final int SALT_SIZE = 16;
-    private static final int IV_SIZE = 12;
-    private static final int TAG_BIT_LENGTH = 128;
-    private static final int PBKDF2_ITERATIONS_V3 = 10000;
-    private static final int PBKDF2_ITERATIONS = 500000;
-    private static final int KEY_LENGTH = 256;
 
     public interface BackupDelegate {
         void onProgress(float progress);
@@ -89,36 +72,13 @@ public class SecretChatBackupManager {
                     return;
                 }
                 log(logs, "Found " + chatIds.size() + " chats.");
+                log(logs, "Extracting database state...");
+                JSONObject state = extractDatabaseState(database, idsToLoad, chatIds, logs);
 
-                byte[] payload;
-                if (format == FORMAT_BINARY) {
-                    log(logs, "Serializing to Binary...");
-                    payload = serializeBinary(database, idsToLoad, chatIds, logs);
-                } else {
-                    log(logs, "Serializing to JSON...");
-                    payload = serializeJson(database, idsToLoad, chatIds, logs).getBytes(StandardCharsets.UTF_8);
-                }
-
-                log(logs, "Encrypting payload...");
-                byte[] salt = randomBytes(SALT_SIZE);
-                byte[] iv = randomBytes(IV_SIZE);
-                byte[] encryptedPayload = encryptPayload(finalPassword, salt, iv, payload);
-
+                log(logs, format == FORMAT_BINARY ? "Rust: serializing Binary backup..." : "Rust: serializing JSON backup...");
+                byte[] encoded = RustCore.encodeSecretBackup(finalPassword, format, state.toString());
                 try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                    fos.write(HEADER.getBytes(StandardCharsets.UTF_8));
-
-                    NativeByteBuffer headerBuf = new NativeByteBuffer(8);
-                    headerBuf.writeInt32(VERSION);
-                    headerBuf.writeInt32(format);
-                    byte[] headerBytes = new byte[8];
-                    headerBuf.position(0);
-                    headerBuf.readBytes(headerBytes, false);
-                    headerBuf.reuse();
-
-                    fos.write(headerBytes);
-                    fos.write(salt);
-                    fos.write(iv);
-                    fos.write(encryptedPayload);
+                    fos.write(encoded);
                 }
 
                 log(logs, "Backup written to " + outputFile.getAbsolutePath());
@@ -142,55 +102,24 @@ public class SecretChatBackupManager {
                     return;
                 }
 
-                RestoreAccumulator accumulator = new RestoreAccumulator();
+                log(logs, "Rust: decrypting and decoding backup...");
+                byte[] fileBytes = new byte[(int) inputFile.length()];
                 try (FileInputStream fis = new FileInputStream(inputFile)) {
-                    int version;
-                    int format;
-                    byte[] payload;
+                    readFully(fis, fileBytes);
+                }
+                String decoded = RustCore.decodeSecretBackup(finalPassword, fileBytes);
+                JSONObject root = new JSONObject(decoded);
+                int version = root.optInt("_backup_version", 4);
+                root.remove("_backup_version");
+                root.remove("_backup_format");
+                log(logs, "Decryption successful.");
 
-                    byte[] header = new byte[HEADER.length()];
-                    readFully(fis, header);
-                    if (!HEADER.equals(new String(header, StandardCharsets.UTF_8))) {
-                        finish(delegate, false, "Invalid header", logs);
-                        return;
-                    }
-
-                    byte[] versionInfo = new byte[8];
-                    readFully(fis, versionInfo);
-                    NativeByteBuffer versionBuffer = new NativeByteBuffer(8);
-                    versionBuffer.writeBytes(versionInfo);
-                    versionBuffer.position(0);
-                    version = versionBuffer.readInt32(false);
-                    format = versionBuffer.readInt32(false);
-                    versionBuffer.reuse();
-
-                    if (version < 1 || version > VERSION) {
-                        finish(delegate, false, "Unsupported version " + version, logs);
-                        return;
-                    }
-
-                    byte[] salt = new byte[SALT_SIZE];
-                    byte[] iv = new byte[IV_SIZE];
-                    readFully(fis, salt);
-                    readFully(fis, iv);
-
-                    payload = new byte[(int) (inputFile.length() - HEADER.length() - 8 - SALT_SIZE - IV_SIZE)];
-                    readFully(fis, payload);
-                    payload = decryptPayload(version, finalPassword, salt, iv, payload);
-                    log(logs, "Decryption successful.");
-
-                    database.beginTransaction();
-                    try {
-                        if (format == FORMAT_BINARY) {
-                            deserializeBinary(database, payload, version, accumulator, logs);
-                        } else if (format == FORMAT_JSON) {
-                            deserializeJson(database, new String(payload, StandardCharsets.UTF_8), version, accumulator, logs);
-                        } else {
-                            throw new IllegalArgumentException("Unsupported format " + format);
-                        }
-                    } finally {
-                        database.commitTransaction();
-                    }
+                RestoreAccumulator accumulator = new RestoreAccumulator();
+                database.beginTransaction();
+                try {
+                    applyDatabaseState(database, root, version, accumulator, logs);
+                } finally {
+                    database.commitTransaction();
                 }
 
                 rehydrateRestoredDialogs(currentAccount, storage, accumulator, logs);
@@ -200,6 +129,49 @@ public class SecretChatBackupManager {
                 finish(delegate, false, e.getMessage() != null ? e.getMessage() : e.getClass().getName(), logs);
             }
         });
+    }
+
+    private static JSONObject extractDatabaseState(SQLiteDatabase database, String idsToLoad, ArrayList<Integer> chatIds, StringBuilder logs) throws Exception {
+        JSONObject root = new JSONObject();
+        ArrayList<Long> userIds = new ArrayList<>();
+
+        log(logs, "Extracting enc_chats...");
+        root.put("enc_chats", buildEncryptedChatsJson(database, idsToLoad, userIds));
+        log(logs, "Extracting messages...");
+        root.put("messages_by_chat", buildMessagesJson(database, chatIds));
+        log(logs, "Extracting dialogs...");
+        root.put("dialogs", buildDialogsJson(database, chatIds));
+        log(logs, "Extracting dialog_settings...");
+        root.put("dialog_settings", buildDialogSettingsJson(database, chatIds));
+        log(logs, "Extracting users...");
+        root.put("users", buildUsersJson(database, userIds));
+        log(logs, "Extracting params...");
+        JSONObject params = buildParamsJson(database);
+        if (params != null) root.put("params", params);
+        log(logs, "Extracting requested_holes...");
+        root.put("requested_holes", buildRequestedHolesJson(database, chatIds));
+        return root;
+    }
+
+    private static void applyDatabaseState(SQLiteDatabase database, JSONObject root, int version, RestoreAccumulator accumulator, StringBuilder logs) throws Exception {
+        log(logs, "Restoring enc_chats...");
+        readEncryptedChatsJson(database, root.optJSONArray("enc_chats"), accumulator);
+        log(logs, "Restoring messages...");
+        readMessagesJson(database, root.optJSONArray("messages_by_chat"), accumulator);
+        log(logs, "Restoring dialogs...");
+        readDialogsJson(database, root.optJSONArray("dialogs"), accumulator);
+        if (version >= 3) {
+            log(logs, "Restoring dialog_settings...");
+            readDialogSettingsJson(database, root.optJSONArray("dialog_settings"));
+        } else {
+            log(logs, "Backup version does not contain dialog_settings; mute state cannot be restored from this file.");
+        }
+        log(logs, "Restoring users...");
+        readUsersJson(database, root.optJSONArray("users"));
+        log(logs, "Restoring params...");
+        readParamsJson(database, root.optJSONObject("params"));
+        log(logs, "Restoring requested_holes...");
+        readRequestedHolesJson(database, root.optJSONArray("requested_holes"));
     }
 
     private static String loadEncryptedChatIds(SQLiteDatabase database, ArrayList<Integer> chatIds) throws Exception {
@@ -217,354 +189,6 @@ public class SecretChatBackupManager {
             return ids.toString();
         } finally {
             cursor.dispose();
-        }
-    }
-
-    private static byte[] serializeBinary(SQLiteDatabase database, String idsToLoad, ArrayList<Integer> chatIds, StringBuilder logs) throws Exception {
-        NativeByteBuffer buffer = new NativeByteBuffer(2 * 1024 * 1024);
-        ArrayList<Long> userIds = new ArrayList<>();
-
-        log(logs, "Serializing enc_chats...");
-        writeEncryptedChatsBinary(database, idsToLoad, buffer, userIds);
-
-        log(logs, "Serializing messages...");
-        writeMessagesBinary(database, chatIds, buffer);
-
-        log(logs, "Serializing dialogs...");
-        writeDialogsBinary(database, chatIds, buffer);
-
-        log(logs, "Serializing dialog_settings...");
-        writeDialogSettingsBinary(database, chatIds, buffer);
-
-        log(logs, "Serializing users...");
-        writeUsersBinary(database, userIds, buffer);
-
-        log(logs, "Serializing params...");
-        writeParamsBinary(database, buffer);
-
-        log(logs, "Serializing requested_holes...");
-        writeRequestedHolesBinary(database, chatIds, buffer);
-
-        byte[] result = new byte[buffer.length()];
-        buffer.position(0);
-        buffer.readBytes(result, false);
-        buffer.reuse();
-        return result;
-    }
-
-    private static String serializeJson(SQLiteDatabase database, String idsToLoad, ArrayList<Integer> chatIds, StringBuilder logs) throws Exception {
-        JSONObject root = new JSONObject();
-        ArrayList<Long> userIds = new ArrayList<>();
-
-        log(logs, "JSON: Serializing enc_chats...");
-        root.put("enc_chats", buildEncryptedChatsJson(database, idsToLoad, userIds));
-
-        log(logs, "JSON: Serializing messages...");
-        root.put("messages_by_chat", buildMessagesJson(database, chatIds));
-
-        log(logs, "JSON: Serializing dialogs...");
-        root.put("dialogs", buildDialogsJson(database, chatIds));
-
-        log(logs, "JSON: Serializing dialog_settings...");
-        root.put("dialog_settings", buildDialogSettingsJson(database, chatIds));
-
-        log(logs, "JSON: Serializing users...");
-        root.put("users", buildUsersJson(database, userIds));
-
-        log(logs, "JSON: Serializing params...");
-        JSONObject params = buildParamsJson(database);
-        if (params != null) {
-            root.put("params", params);
-        }
-
-        log(logs, "JSON: Serializing requested_holes...");
-        root.put("requested_holes", buildRequestedHolesJson(database, chatIds));
-
-        return root.toString();
-    }
-
-    private static void deserializeBinary(SQLiteDatabase database, byte[] payload, int version, RestoreAccumulator accumulator, StringBuilder logs) throws Exception {
-        NativeByteBuffer buffer = new NativeByteBuffer(payload.length);
-        buffer.writeBytes(payload);
-        buffer.position(0);
-
-        log(logs, "Restoring enc_chats...");
-        readEncryptedChatsBinary(database, buffer, accumulator);
-
-        log(logs, "Restoring messages...");
-        readMessagesBinary(database, buffer, version, accumulator);
-
-        log(logs, "Restoring dialogs...");
-        readDialogsBinary(database, buffer, accumulator);
-
-        if (version >= 3) {
-            log(logs, "Restoring dialog_settings...");
-            readDialogSettingsBinary(database, buffer);
-        } else {
-            log(logs, "Backup version does not contain dialog_settings; mute state cannot be restored from this file.");
-        }
-
-        log(logs, "Restoring users...");
-        readUsersBinary(database, buffer);
-
-        log(logs, "Restoring params...");
-        readParamsBinary(database, buffer);
-
-        log(logs, "Restoring requested_holes...");
-        readRequestedHolesBinary(database, buffer);
-
-        buffer.reuse();
-    }
-
-    private static void deserializeJson(SQLiteDatabase database, String json, int version, RestoreAccumulator accumulator, StringBuilder logs) throws Exception {
-        JSONObject root = new JSONObject(json);
-
-        log(logs, "JSON: Restoring enc_chats...");
-        readEncryptedChatsJson(database, root.optJSONArray("enc_chats"), accumulator);
-
-        log(logs, "JSON: Restoring messages...");
-        readMessagesJson(database, root.optJSONArray("messages_by_chat"), accumulator);
-
-        log(logs, "JSON: Restoring dialogs...");
-        readDialogsJson(database, root.optJSONArray("dialogs"), accumulator);
-
-        if (version >= 3) {
-            log(logs, "JSON: Restoring dialog_settings...");
-            readDialogSettingsJson(database, root.optJSONArray("dialog_settings"));
-        } else {
-            log(logs, "JSON backup version does not contain dialog_settings; mute state cannot be restored from this file.");
-        }
-
-        log(logs, "JSON: Restoring users...");
-        readUsersJson(database, root.optJSONArray("users"));
-
-        log(logs, "JSON: Restoring params...");
-        readParamsJson(database, root.optJSONObject("params"));
-
-        log(logs, "JSON: Restoring requested_holes...");
-        readRequestedHolesJson(database, root.optJSONArray("requested_holes"));
-    }
-
-    private static void writeEncryptedChatsBinary(SQLiteDatabase database, String idsToLoad, NativeByteBuffer buffer, ArrayList<Long> userIds) throws Exception {
-        SQLiteCursor cursor = database.queryFinalized(String.format(Locale.US,
-                "SELECT uid, user, name, data, g, authkey, ttl, layer, seq_in, seq_out, use_count, exchange_id, key_date, fprint, fauthkey, khash, in_seq_no, admin_id, mtproto_seq FROM enc_chats WHERE uid IN(%s)",
-                idsToLoad));
-        try {
-            ArrayList<byte[]> rows = new ArrayList<>();
-            while (cursor.next()) {
-                NativeByteBuffer row = new NativeByteBuffer(2048);
-                row.writeInt32(cursor.intValue(0));
-                long userId = cursor.longValue(1);
-                row.writeInt64(userId);
-                addUnique(userIds, userId);
-                row.writeString(cursor.stringValue(2));
-                writeByteArray(row, getBufferBytes(cursor.byteBufferValue(3)));
-                writeByteArray(row, cursor.byteArrayValue(4));
-                writeByteArray(row, cursor.byteArrayValue(5));
-                row.writeInt32(cursor.intValue(6));
-                row.writeInt32(cursor.intValue(7));
-                row.writeInt32(cursor.intValue(8));
-                row.writeInt32(cursor.intValue(9));
-                row.writeInt32(cursor.intValue(10));
-                row.writeInt64(cursor.longValue(11));
-                row.writeInt32(cursor.intValue(12));
-                row.writeInt64(cursor.longValue(13));
-                writeByteArray(row, cursor.byteArrayValue(14));
-                writeByteArray(row, cursor.byteArrayValue(15));
-                row.writeInt32(cursor.intValue(16));
-                row.writeInt64(cursor.longValue(17));
-                row.writeInt32(cursor.intValue(18));
-
-                byte[] bytes = new byte[row.length()];
-                row.position(0);
-                row.readBytes(bytes, false);
-                row.reuse();
-                rows.add(bytes);
-            }
-
-            buffer.writeInt32(rows.size());
-            for (byte[] row : rows) {
-                buffer.writeInt32(row.length);
-                buffer.writeBytes(row);
-            }
-        } finally {
-            cursor.dispose();
-        }
-    }
-
-    private static void writeMessagesBinary(SQLiteDatabase database, ArrayList<Integer> chatIds, NativeByteBuffer buffer) throws Exception {
-        buffer.writeInt32(chatIds.size());
-        for (int chatId : chatIds) {
-            long dialogId = DialogObject.makeEncryptedDialogId(chatId);
-            buffer.writeInt32(chatId);
-
-            SQLiteCursor cursor = database.queryFinalized("SELECT m.mid, m.read_state, m.send_state, m.date, m.data, m.out, m.ttl, m.media, m.replydata, m.imp, m.mention, m.forwards, m.replies_data, m.thread_reply_id, m.is_channel, m.reply_to_message_id, m.custom_params, m.group_id, m.reply_to_story_id, s.seq_in, s.seq_out, r.random_id, med.data, med.type, med.date FROM messages_v2 AS m " +
-                    "LEFT JOIN messages_seq AS s ON m.mid = s.mid " +
-                    "LEFT JOIN randoms_v2 AS r ON m.mid = r.mid AND m.uid = r.uid " +
-                    "LEFT JOIN media_v4 AS med ON m.mid = med.mid AND m.uid = med.uid " +
-                    "WHERE m.uid = ?", dialogId);
-            try {
-                ArrayList<byte[]> rows = new ArrayList<>();
-                while (cursor.next()) {
-                    NativeByteBuffer row = new NativeByteBuffer(2048);
-                    row.writeInt32(cursor.intValue(0));
-                    row.writeInt32(cursor.intValue(1));
-                    row.writeInt32(cursor.intValue(2));
-                    row.writeInt32(cursor.intValue(3));
-                    writeByteArray(row, getBufferBytes(cursor.byteBufferValue(4)));
-                    row.writeInt32(cursor.intValue(5));
-                    row.writeInt32(cursor.intValue(6));
-                    row.writeInt32(cursor.intValue(7));
-                    writeByteArray(row, cursor.byteArrayValue(8));
-                    row.writeInt32(cursor.intValue(9));
-                    row.writeInt32(cursor.intValue(10));
-                    row.writeInt32(cursor.intValue(11));
-                    writeByteArray(row, cursor.byteArrayValue(12));
-                    row.writeInt32(cursor.intValue(13));
-                    row.writeInt32(cursor.intValue(14));
-                    row.writeInt32(cursor.intValue(15));
-                    writeByteArray(row, cursor.byteArrayValue(16));
-                    row.writeInt64(cursor.longValue(17));
-                    row.writeInt32(cursor.intValue(18));
-                    row.writeInt32(cursor.intValue(19));
-                    row.writeInt32(cursor.intValue(20));
-                    row.writeInt64(cursor.longValue(21));
-                    byte[] mediaData = getBufferBytes(cursor.byteBufferValue(22));
-                    if (mediaData != null) {
-                        row.writeInt32(1);
-                        writeByteArray(row, mediaData);
-                        row.writeInt32(cursor.intValue(23));
-                        row.writeInt32(cursor.intValue(24));
-                    } else {
-                        row.writeInt32(0);
-                    }
-
-                    byte[] bytes = new byte[row.length()];
-                    row.position(0);
-                    row.readBytes(bytes, false);
-                    row.reuse();
-                    rows.add(bytes);
-                }
-
-                buffer.writeInt32(rows.size());
-                for (byte[] row : rows) {
-                    buffer.writeInt32(row.length);
-                    buffer.writeBytes(row);
-                }
-            } finally {
-                cursor.dispose();
-            }
-        }
-    }
-
-    private static void writeDialogsBinary(SQLiteDatabase database, ArrayList<Integer> chatIds, NativeByteBuffer buffer) throws Exception {
-        buffer.writeInt32(chatIds.size());
-        for (int chatId : chatIds) {
-            long dialogId = DialogObject.makeEncryptedDialogId(chatId);
-            buffer.writeInt64(dialogId);
-            SQLiteCursor cursor = database.queryFinalized("SELECT date, unread_count, last_mid, inbox_max, outbox_max, last_mid_i, unread_count_i, pts, date_i, pinned, flags, folder_id, data, unread_reactions, last_mid_group, ttl_period, unread_poll_votes FROM dialogs WHERE did = ?", dialogId);
-            try {
-                if (cursor.next()) {
-                    buffer.writeInt32(1);
-                    buffer.writeInt32(cursor.intValue(0));
-                    buffer.writeInt32(cursor.intValue(1));
-                    buffer.writeInt32(cursor.intValue(2));
-                    buffer.writeInt32(cursor.intValue(3));
-                    buffer.writeInt32(cursor.intValue(4));
-                    buffer.writeInt64(cursor.longValue(5));
-                    buffer.writeInt32(cursor.intValue(6));
-                    buffer.writeInt32(cursor.intValue(7));
-                    buffer.writeInt32(cursor.intValue(8));
-                    buffer.writeInt32(cursor.intValue(9));
-                    buffer.writeInt32(cursor.intValue(10));
-                    buffer.writeInt32(cursor.intValue(11));
-                    writeByteArray(buffer, getBufferBytes(cursor.byteBufferValue(12)));
-                    buffer.writeInt32(cursor.intValue(13));
-                    buffer.writeInt64(cursor.longValue(14));
-                    buffer.writeInt32(cursor.intValue(15));
-                    buffer.writeInt32(cursor.intValue(16));
-                } else {
-                    buffer.writeInt32(0);
-                }
-            } finally {
-                cursor.dispose();
-            }
-        }
-    }
-
-    private static void writeDialogSettingsBinary(SQLiteDatabase database, ArrayList<Integer> chatIds, NativeByteBuffer buffer) throws Exception {
-        buffer.writeInt32(chatIds.size());
-        for (int chatId : chatIds) {
-            long dialogId = DialogObject.makeEncryptedDialogId(chatId);
-            buffer.writeInt64(dialogId);
-            SQLiteCursor cursor = database.queryFinalized("SELECT flags FROM dialog_settings WHERE did = ?", dialogId);
-            try {
-                if (cursor.next()) {
-                    buffer.writeInt32(1);
-                    buffer.writeInt64(cursor.longValue(0));
-                } else {
-                    buffer.writeInt32(0);
-                }
-            } finally {
-                cursor.dispose();
-            }
-        }
-    }
-
-    private static void writeUsersBinary(SQLiteDatabase database, ArrayList<Long> userIds, NativeByteBuffer buffer) throws Exception {
-        buffer.writeInt32(userIds.size());
-        for (long userId : userIds) {
-            buffer.writeInt64(userId);
-            SQLiteCursor cursor = database.queryFinalized("SELECT data, status, name FROM users WHERE uid = ?", userId);
-            try {
-                if (cursor.next()) {
-                    buffer.writeInt32(1);
-                    writeByteArray(buffer, getBufferBytes(cursor.byteBufferValue(0)));
-                    buffer.writeInt32(cursor.intValue(1));
-                    buffer.writeString(cursor.stringValue(2));
-                } else {
-                    buffer.writeInt32(0);
-                }
-            } finally {
-                cursor.dispose();
-            }
-        }
-    }
-
-    private static void writeParamsBinary(SQLiteDatabase database, NativeByteBuffer buffer) throws Exception {
-        SQLiteCursor cursor = database.queryFinalized("SELECT lsv, sg, pbytes FROM params WHERE id = 1");
-        try {
-            if (cursor.next()) {
-                buffer.writeInt32(1);
-                buffer.writeInt32(cursor.intValue(0));
-                buffer.writeInt32(cursor.intValue(1));
-                writeByteArray(buffer, cursor.byteArrayValue(2));
-            } else {
-                buffer.writeInt32(0);
-            }
-        } finally {
-            cursor.dispose();
-        }
-    }
-
-    private static void writeRequestedHolesBinary(SQLiteDatabase database, ArrayList<Integer> chatIds, NativeByteBuffer buffer) throws Exception {
-        buffer.writeInt32(chatIds.size());
-        for (int chatId : chatIds) {
-            buffer.writeInt32(chatId);
-            SQLiteCursor cursor = database.queryFinalized("SELECT seq_out_start, seq_out_end FROM requested_holes WHERE uid = ?", chatId);
-            try {
-                ArrayList<int[]> rows = new ArrayList<>();
-                while (cursor.next()) {
-                    rows.add(new int[]{cursor.intValue(0), cursor.intValue(1)});
-                }
-                buffer.writeInt32(rows.size());
-                for (int[] row : rows) {
-                    buffer.writeInt32(row[0]);
-                    buffer.writeInt32(row[1]);
-                }
-            } finally {
-                cursor.dispose();
-            }
         }
     }
 
@@ -774,349 +398,6 @@ public class SecretChatBackupManager {
             holes.put(chatHoles);
         }
         return holes;
-    }
-
-    private static void readEncryptedChatsBinary(SQLiteDatabase database, NativeByteBuffer buffer, RestoreAccumulator accumulator) throws Exception {
-        SQLitePreparedStatement insert = database.executeFast("INSERT INTO enc_chats VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        SQLitePreparedStatement update = database.executeFast("UPDATE enc_chats SET user=?, name=?, data=?, g=?, authkey=?, ttl=?, layer=?, seq_in=?, seq_out=?, use_count=?, exchange_id=?, key_date=?, fprint=?, fauthkey=?, khash=?, in_seq_no=?, admin_id=?, mtproto_seq=? WHERE uid=?");
-        try {
-            int chatsCount = buffer.readInt32(false);
-            for (int i = 0; i < chatsCount; i++) {
-                int rowLength = buffer.readInt32(false);
-                byte[] rowBytes = new byte[rowLength];
-                buffer.readBytes(rowBytes, false);
-                NativeByteBuffer row = new NativeByteBuffer(rowLength);
-                row.writeBytes(rowBytes);
-                row.position(0);
-
-                int chatId = row.readInt32(false);
-                long userId = row.readInt64(false);
-                String name = row.readString(false);
-                byte[] data = readByteArray(row);
-                byte[] g = readByteArray(row);
-                byte[] authKey = readByteArray(row);
-                int ttl = row.readInt32(false);
-                int layer = row.readInt32(false);
-                int seqIn = row.readInt32(false);
-                int seqOut = row.readInt32(false);
-                int useCount = row.readInt32(false);
-                long exchangeId = row.readInt64(false);
-                int keyDate = row.readInt32(false);
-                long fingerprint = row.readInt64(false);
-                byte[] futureAuthKey = readByteArray(row);
-                byte[] keyHash = readByteArray(row);
-                int inSeqNo = row.readInt32(false);
-                long adminId = row.readInt64(false);
-                int mtprotoSeq = row.readInt32(false);
-                row.reuse();
-
-                boolean exists = encryptedChatExists(database, chatId);
-                boolean shouldWrite = shouldReplaceEncryptedChat(database, chatId, keyDate, seqOut);
-                if (!exists) {
-                    addUnique(accumulator.createdChatIds, chatId);
-                }
-                if (!shouldWrite) {
-                    addUnique(accumulator.restoredChatIds, chatId);
-                    continue;
-                }
-
-                SQLitePreparedStatement state = exists ? update : insert;
-                state.requery();
-                int position = 1;
-                if (!exists) {
-                    state.bindInteger(position++, chatId);
-                }
-                state.bindLong(position++, userId);
-                state.bindString(position++, name);
-                bindBlob(state, position++, data);
-                bindBlob(state, position++, g);
-                bindBlob(state, position++, authKey);
-                state.bindInteger(position++, ttl);
-                state.bindInteger(position++, layer);
-                state.bindInteger(position++, seqIn);
-                state.bindInteger(position++, seqOut);
-                state.bindInteger(position++, useCount);
-                state.bindLong(position++, exchangeId);
-                state.bindInteger(position++, keyDate);
-                state.bindLong(position++, fingerprint);
-                bindBlob(state, position++, futureAuthKey);
-                bindBlob(state, position++, keyHash);
-                state.bindInteger(position++, inSeqNo);
-                state.bindLong(position++, adminId);
-                state.bindInteger(position++, mtprotoSeq);
-                if (exists) {
-                    state.bindInteger(position, chatId);
-                }
-                state.step();
-                addUnique(accumulator.restoredChatIds, chatId);
-            }
-        } finally {
-            insert.dispose();
-            update.dispose();
-        }
-    }
-
-    private static void readMessagesBinary(SQLiteDatabase database, NativeByteBuffer buffer, int version, RestoreAccumulator accumulator) throws Exception {
-        SQLitePreparedStatement stateMsg = database.executeFast("INSERT OR IGNORE INTO messages_v2 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        SQLitePreparedStatement stateSeq = database.executeFast("INSERT OR IGNORE INTO messages_seq VALUES(?, ?, ?)");
-        SQLitePreparedStatement stateRnd = database.executeFast("INSERT OR IGNORE INTO randoms_v2 VALUES(?, ?, ?)");
-        SQLitePreparedStatement stateMed = database.executeFast("INSERT OR IGNORE INTO media_v4 VALUES(?, ?, ?, ?, ?)");
-        try {
-            int chatsCount = buffer.readInt32(false);
-            for (int i = 0; i < chatsCount; i++) {
-                int chatId = buffer.readInt32(false);
-                long dialogId = DialogObject.makeEncryptedDialogId(chatId);
-                addUnique(accumulator.restoredChatIds, chatId);
-                addUnique(accumulator.restoredDialogIds, dialogId);
-
-                int messageCount = buffer.readInt32(false);
-                for (int j = 0; j < messageCount; j++) {
-                    int rowLength = buffer.readInt32(false);
-                    byte[] rowBytes = new byte[rowLength];
-                    buffer.readBytes(rowBytes, false);
-                    NativeByteBuffer row = new NativeByteBuffer(rowLength);
-                    row.writeBytes(rowBytes);
-                    row.position(0);
-
-                    int mid = row.readInt32(false);
-                    int readState = row.readInt32(false);
-                    int sendState = row.readInt32(false);
-                    int date = row.readInt32(false);
-                    byte[] data = readByteArray(row);
-                    int out = row.readInt32(false);
-                    int ttl = row.readInt32(false);
-                    int media = row.readInt32(false);
-                    byte[] replyData = readByteArray(row);
-                    int imp = row.readInt32(false);
-                    int mention = row.readInt32(false);
-                    int forwards = row.readInt32(false);
-                    byte[] repliesData = readByteArray(row);
-                    int threadReplyId = row.readInt32(false);
-                    int isChannel = row.readInt32(false);
-                    int replyToMessageId = row.readInt32(false);
-                    byte[] customParams = readByteArray(row);
-                    long groupId = row.readInt64(false);
-                    int replyToStoryId = row.readInt32(false);
-                    int seqIn = row.readInt32(false);
-                    int seqOut = row.readInt32(false);
-                    long randomId = row.readInt64(false);
-
-                    if (version >= 2 && row.readInt32(false) == 1) {
-                        byte[] mediaData = readByteArray(row);
-                        int mediaType = row.readInt32(false);
-                        int mediaDate = row.readInt32(false);
-                        stateMed.requery();
-                        stateMed.bindInteger(1, mid);
-                        stateMed.bindLong(2, dialogId);
-                        stateMed.bindInteger(3, mediaDate);
-                        stateMed.bindInteger(4, mediaType);
-                        bindBlob(stateMed, 5, mediaData);
-                        stateMed.step();
-                    }
-                    row.reuse();
-
-                    stateMsg.requery();
-                    stateMsg.bindInteger(1, mid);
-                    stateMsg.bindLong(2, dialogId);
-                    stateMsg.bindInteger(3, readState);
-                    stateMsg.bindInteger(4, sendState);
-                    stateMsg.bindInteger(5, date);
-                    bindBlob(stateMsg, 6, data);
-                    stateMsg.bindInteger(7, out);
-                    stateMsg.bindInteger(8, ttl);
-                    stateMsg.bindInteger(9, media);
-                    bindBlob(stateMsg, 10, replyData);
-                    stateMsg.bindInteger(11, imp);
-                    stateMsg.bindInteger(12, mention);
-                    stateMsg.bindInteger(13, forwards);
-                    bindBlob(stateMsg, 14, repliesData);
-                    stateMsg.bindInteger(15, threadReplyId);
-                    stateMsg.bindInteger(16, isChannel);
-                    stateMsg.bindInteger(17, replyToMessageId);
-                    bindBlob(stateMsg, 18, customParams);
-                    stateMsg.bindLong(19, groupId);
-                    stateMsg.bindInteger(20, replyToStoryId);
-                    stateMsg.step();
-
-                    if (seqIn != 0 || seqOut != 0) {
-                        stateSeq.requery();
-                        stateSeq.bindInteger(1, mid);
-                        stateSeq.bindInteger(2, seqIn);
-                        stateSeq.bindInteger(3, seqOut);
-                        stateSeq.step();
-                    }
-
-                    if (randomId != 0) {
-                        stateRnd.requery();
-                        stateRnd.bindLong(1, randomId);
-                        stateRnd.bindInteger(2, mid);
-                        stateRnd.bindLong(3, dialogId);
-                        stateRnd.step();
-                    }
-                }
-            }
-        } finally {
-            stateMsg.dispose();
-            stateSeq.dispose();
-            stateRnd.dispose();
-            stateMed.dispose();
-        }
-    }
-
-    private static void readDialogsBinary(SQLiteDatabase database, NativeByteBuffer buffer, RestoreAccumulator accumulator) throws Exception {
-        SQLitePreparedStatement insert = database.executeFast("INSERT INTO dialogs VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        SQLitePreparedStatement update = database.executeFast("UPDATE dialogs SET date=?, unread_count=?, last_mid=?, inbox_max=?, outbox_max=?, last_mid_i=?, unread_count_i=?, pts=?, date_i=?, pinned=?, flags=?, folder_id=?, data=?, unread_reactions=?, last_mid_group=?, ttl_period=?, unread_poll_votes=? WHERE did=?");
-        try {
-            int dialogsCount = buffer.readInt32(false);
-            for (int i = 0; i < dialogsCount; i++) {
-                long dialogId = buffer.readInt64(false);
-                addUnique(accumulator.restoredDialogIds, dialogId);
-                if (buffer.readInt32(false) == 0) {
-                    continue;
-                }
-
-                int date = buffer.readInt32(false);
-                int unreadCount = buffer.readInt32(false);
-                int lastMid = buffer.readInt32(false);
-                int inboxMax = buffer.readInt32(false);
-                int outboxMax = buffer.readInt32(false);
-                long lastMidI = buffer.readInt64(false);
-                int unreadCountI = buffer.readInt32(false);
-                int pts = buffer.readInt32(false);
-                int dateI = buffer.readInt32(false);
-                int pinned = buffer.readInt32(false);
-                int flags = buffer.readInt32(false);
-                int folderId = buffer.readInt32(false);
-                byte[] data = readByteArray(buffer);
-                int unreadReactions = buffer.readInt32(false);
-                long lastMidGroup = buffer.readInt64(false);
-                int ttlPeriod = buffer.readInt32(false);
-                int unreadPollVotes = buffer.readInt32(false);
-
-                boolean exists = dialogExists(database, dialogId);
-                if (exists && !shouldReplaceDialog(database, dialogId, date, lastMid)) {
-                    continue;
-                }
-
-                SQLitePreparedStatement state = exists ? update : insert;
-                state.requery();
-                int position = 1;
-                if (!exists) {
-                    state.bindLong(position++, dialogId);
-                }
-                state.bindInteger(position++, date);
-                state.bindInteger(position++, unreadCount);
-                state.bindInteger(position++, lastMid);
-                state.bindInteger(position++, inboxMax);
-                state.bindInteger(position++, outboxMax);
-                state.bindLong(position++, lastMidI);
-                state.bindInteger(position++, unreadCountI);
-                state.bindInteger(position++, pts);
-                state.bindInteger(position++, dateI);
-                state.bindInteger(position++, pinned);
-                state.bindInteger(position++, flags);
-                state.bindInteger(position++, folderId);
-                bindBlob(state, position++, data);
-                state.bindInteger(position++, unreadReactions);
-                state.bindLong(position++, lastMidGroup);
-                state.bindInteger(position++, ttlPeriod);
-                state.bindInteger(position++, unreadPollVotes);
-                if (exists) {
-                    state.bindLong(position, dialogId);
-                }
-                state.step();
-            }
-        } finally {
-            insert.dispose();
-            update.dispose();
-        }
-    }
-
-    private static void readDialogSettingsBinary(SQLiteDatabase database, NativeByteBuffer buffer) throws Exception {
-        SQLitePreparedStatement state = database.executeFast("REPLACE INTO dialog_settings VALUES(?, ?)");
-        try {
-            int count = buffer.readInt32(false);
-            for (int i = 0; i < count; i++) {
-                long dialogId = buffer.readInt64(false);
-                if (buffer.readInt32(false) == 0) {
-                    continue;
-                }
-                long flags = buffer.readInt64(false);
-                state.requery();
-                state.bindLong(1, dialogId);
-                state.bindLong(2, flags);
-                state.step();
-            }
-        } finally {
-            state.dispose();
-        }
-    }
-
-    private static void readUsersBinary(SQLiteDatabase database, NativeByteBuffer buffer) throws Exception {
-        SQLitePreparedStatement state = database.executeFast("REPLACE INTO users VALUES(?, ?, ?, ?)");
-        try {
-            int usersCount = buffer.readInt32(false);
-            for (int i = 0; i < usersCount; i++) {
-                long userId = buffer.readInt64(false);
-                if (buffer.readInt32(false) == 0) {
-                    continue;
-                }
-                byte[] data = readByteArray(buffer);
-                int status = buffer.readInt32(false);
-                String name = buffer.readString(false);
-
-                state.requery();
-                state.bindLong(1, userId);
-                state.bindString(2, name);
-                state.bindInteger(3, status);
-                bindBlob(state, 4, data);
-                state.step();
-            }
-        } finally {
-            state.dispose();
-        }
-    }
-
-    private static void readParamsBinary(SQLiteDatabase database, NativeByteBuffer buffer) throws Exception {
-        if (buffer.readInt32(false) != 1) {
-            return;
-        }
-
-        SQLitePreparedStatement state = database.executeFast("UPDATE params SET lsv = ?, sg = ?, pbytes = ? WHERE id = 1");
-        try {
-            int lsv = buffer.readInt32(false);
-            int sg = buffer.readInt32(false);
-            byte[] pbytes = readByteArray(buffer);
-            state.requery();
-            state.bindInteger(1, lsv);
-            state.bindInteger(2, sg);
-            bindBlob(state, 3, pbytes);
-            state.step();
-        } finally {
-            state.dispose();
-        }
-    }
-
-    private static void readRequestedHolesBinary(SQLiteDatabase database, NativeByteBuffer buffer) throws Exception {
-        SQLitePreparedStatement state = database.executeFast("INSERT OR IGNORE INTO requested_holes VALUES(?, ?, ?)");
-        try {
-            int chatsCount = buffer.readInt32(false);
-            for (int i = 0; i < chatsCount; i++) {
-                int chatId = buffer.readInt32(false);
-                int holesCount = buffer.readInt32(false);
-                for (int j = 0; j < holesCount; j++) {
-                    int start = buffer.readInt32(false);
-                    int end = buffer.readInt32(false);
-                    state.requery();
-                    state.bindInteger(1, chatId);
-                    state.bindInteger(2, start);
-                    state.bindInteger(3, end);
-                    state.step();
-                }
-            }
-        } finally {
-            state.dispose();
-        }
     }
 
     private static void readEncryptedChatsJson(SQLiteDatabase database, @Nullable JSONArray chats, RestoreAccumulator accumulator) throws Exception {
@@ -1511,57 +792,6 @@ public class SecretChatBackupManager {
         }
     }
 
-    private static void writeByteArray(NativeByteBuffer buffer, @Nullable byte[] data) throws Exception {
-        if (data == null || data.length == 0) {
-            buffer.writeInt32(0);
-            return;
-        }
-        buffer.writeInt32(data.length);
-        buffer.writeBytes(data);
-    }
-
-    @Nullable
-    private static byte[] readByteArray(NativeByteBuffer buffer) throws Exception {
-        int length = buffer.readInt32(false);
-        if (length <= 0) {
-            return null;
-        }
-        byte[] data = new byte[length];
-        buffer.readBytes(data, false);
-        return data;
-    }
-
-    private static byte[] randomBytes(int size) {
-        byte[] bytes = new byte[size];
-        new SecureRandom().nextBytes(bytes);
-        return bytes;
-    }
-
-    private static byte[] encryptPayload(String password, byte[] salt, byte[] iv, byte[] payload) throws Exception {
-        SecretKey key = deriveKey(password, salt, PBKDF2_ITERATIONS);
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(TAG_BIT_LENGTH, iv));
-        return cipher.doFinal(payload);
-    }
-
-    private static byte[] decryptPayload(int ver, String password, byte[] salt, byte[] iv, byte[] payload) throws Exception {
-        SecretKey key = deriveKey(password, salt, (ver == 3 ? PBKDF2_ITERATIONS_V3 : PBKDF2_ITERATIONS));
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BIT_LENGTH, iv));
-        return cipher.doFinal(payload);
-    }
-
-    private static void readFully(FileInputStream fis, byte[] buffer) throws Exception {
-        int offset = 0;
-        while (offset < buffer.length) {
-            int read = fis.read(buffer, offset, buffer.length - offset);
-            if (read < 0) {
-                throw new IllegalStateException("Unexpected end of file");
-            }
-            offset += read;
-        }
-    }
-
     private static void putBase64(JSONObject object, String key, @Nullable byte[] data) throws Exception {
         if (data != null && data.length > 0) {
             object.put(key, Base64.encodeToString(data, Base64.NO_WRAP));
@@ -1588,10 +818,14 @@ public class SecretChatBackupManager {
         }
     }
 
-    private static SecretKey deriveKey(String password, byte[] salt, int iter) throws Exception {
-        SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-        PBEKeySpec spec = new PBEKeySpec(password.toCharArray(), salt, iter, KEY_LENGTH);
-        SecretKey tmp = factory.generateSecret(spec);
-        return new SecretKeySpec(tmp.getEncoded(), "AES");
+    private static void readFully(FileInputStream fis, byte[] buffer) throws Exception {
+        int offset = 0;
+        while (offset < buffer.length) {
+            int read = fis.read(buffer, offset, buffer.length - offset);
+            if (read < 0) {
+                throw new IllegalStateException("Unexpected end of file");
+            }
+            offset += read;
+        }
     }
 }
