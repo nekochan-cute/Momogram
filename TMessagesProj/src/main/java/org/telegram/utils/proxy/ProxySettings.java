@@ -3,25 +3,19 @@ package org.telegram.utils.proxy;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.text.TextUtils;
-import android.util.Base64;
 
 import androidx.annotation.NonNull;
 
-import org.telegram.messenger.AndroidUtilities;
+import org.json.JSONObject;
+
+import moe.hx030.momogram.utils.RustCore;
 
 import java.io.UnsupportedEncodingException;
-import java.net.IDN;
 import java.net.URLEncoder;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 public final class ProxySettings {
-    private static final int IDN_FLAGS = IDN.ALLOW_UNASSIGNED | IDN.USE_STD3_ASCII_RULES;
-    private static final int WEB_PROXY_PATH_SECRET_MARKER = 0x70;
-    private static final Pattern WEB_PROXY_PATH_PATTERN = Pattern.compile(
-            "[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_-]*)*");
-    private static final Pattern WEB_PROXY_MARKED_SECRET_PATTERN = Pattern.compile("[A-Za-z0-9_-]+");
 
     public static final ProxySettings EMPTY = builder().build();
     public enum Type {
@@ -219,101 +213,21 @@ public final class ProxySettings {
         if (uri == null) {
             return null;
         }
-
         try {
-            String scheme = uri.getScheme();
-            if (scheme == null) {
+            String parsed = RustCore.parseProxyUri(uri.toString());
+            if (parsed == null) {
                 return null;
             }
-
-            Type type;
-
-            if (scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https")) {
-                String host = uri.getHost();
-                if (host == null) {
-                    return null;
-                }
-
-                host = host.toLowerCase();
-                if (!host.equals("telegram.me") && !host.equals("t.me") && !host.equals("telegram.dog")) {
-                    return null;
-                }
-
-                String path = uri.getPath();
-                if (path == null) {
-                    return null;
-                }
-
-                if (path.startsWith("/socks")) {
-                    type = Type.SOCKS5;
-                } else if (path.startsWith("/proxy")) {
-                    type = Type.MTPROTO;
-                } else if (path.startsWith("/webproxy")) {
-                    type = Type.WEB;
-                } else {
-                    return null;
-                }
-            } else if (scheme.equalsIgnoreCase("tg")) {
-                String url = uri.toString();
-
-                if (url.startsWith("tg://socks") || url.startsWith("tg:socks")) {
-                    type = Type.SOCKS5;
-                } else if (url.startsWith("tg://proxy") || url.startsWith("tg:proxy")) {
-                    type = Type.MTPROTO;
-                } else if (url.startsWith("tg://webproxy") || url.startsWith("tg:webproxy")) {
-                    type = Type.WEB;
-                } else {
-                    return null;
-                }
-
-                int queryIndex = url.indexOf('?');
-                if (queryIndex < 0) {
-                    return null;
-                }
-
-                uri = Uri.parse("tg://telegram.org/" + url.substring(queryIndex));
-            } else {
-                return null;
-            }
-
-            String address = uri.getQueryParameter("server");
-            if (address == null) {
-                address = uri.getQueryParameter("host");
-            }
-            if (type != Type.WEB && AndroidUtilities.checkHostForPunycode(address)) {
-                address = IDN.toASCII(address, IDN.ALLOW_UNASSIGNED);
-            }
-
-            int port = 0;
-            String portValue = uri.getQueryParameter("port");
-            if (!TextUtils.isEmpty(portValue)) {
-                try {
-                    port = Integer.parseInt(portValue);
-                } catch (NumberFormatException ignored) {}
-            }
-
-            String secret = uri.getQueryParameter("secret");
-            if (type == Type.WEB) {
-                final boolean hasPath = hasWebProxyPath(address);
-                if (hasPath) {
-                    secret = decodeMarkedWebProxySecret(secret);
-                    if (secret == null) {
-                        return null;
-                    }
-                } else if (!isValidWebProxySecret(secret)) {
-                    return null;
-                }
-            }
-
-            final ProxySettings settings = builder()
-                    .setType(type)
-                    .setAddress(address)
-                    .setPort(port)
-                    .setUser(uri.getQueryParameter("user"))
-                    .setPassword(uri.getQueryParameter("pass"))
-                    .setSecret(secret)
+            JSONObject value = new JSONObject(parsed);
+            ProxySettings settings = builder()
+                    .setType(intToType(value.getInt("proxy_type")))
+                    .setAddress(value.optString("address", ""))
+                    .setPort(value.optInt("port", 0))
+                    .setUser(value.optString("user", ""))
+                    .setPassword(value.optString("password", ""))
+                    .setSecret(value.optString("secret", ""))
                     .build();
-            return type != Type.WEB || settings.isValid() ? settings : null;
+            return settings.getType() != Type.WEB || settings.isValid() ? settings : null;
         } catch (Exception ignore) {
             return null;
         }
@@ -381,50 +295,11 @@ public final class ProxySettings {
      * a proxy at the root path; {@link #isValid()} will reject it.
      */
     private static String normalizeWebAddress(String address) {
-        if (TextUtils.isEmpty(address)) {
-            return "";
-        }
-
-        final int slash = address.indexOf('/');
-        final String host = slash >= 0 ? address.substring(0, slash) : address;
-        final String path = slash >= 0 ? address.substring(slash + 1) : null;
-        if (TextUtils.isEmpty(host)
-                || host.indexOf(':') >= 0
-                || host.indexOf('?') >= 0
-                || host.indexOf('#') >= 0
-                || path != null && !isValidWebProxyPath(path)) {
-            return address;
-        }
-
-        try {
-            final String asciiHost = IDN.toASCII(host, IDN_FLAGS).toLowerCase(Locale.US);
-            return path == null ? asciiHost : asciiHost + '/' + path;
-        } catch (IllegalArgumentException ignored) {
-            return address;
-        }
+        return RustCore.proxyNormalizeWebAddress(address);
     }
 
     private static boolean isValidWebAddress(String address) {
-        if (TextUtils.isEmpty(address)) {
-            return false;
-        }
-
-        final int slash = address.indexOf('/');
-        final String host = slash >= 0 ? address.substring(0, slash) : address;
-        final String path = slash >= 0 ? address.substring(slash + 1) : null;
-        if (TextUtils.isEmpty(host)
-                || host.indexOf(':') >= 0
-                || host.indexOf('?') >= 0
-                || host.indexOf('#') >= 0
-                || path != null && !isValidWebProxyPath(path)) {
-            return false;
-        }
-
-        try {
-            return host.equals(IDN.toASCII(host, IDN_FLAGS).toLowerCase(Locale.US));
-        } catch (IllegalArgumentException ignored) {
-            return false;
-        }
+        return RustCore.proxyIsValidWebAddress(address);
     }
 
     private static boolean hasWebProxyPath(String address) {
@@ -432,87 +307,20 @@ public final class ProxySettings {
     }
 
     private static boolean isValidWebProxyPath(String path) {
-        return path.length() <= 128 && WEB_PROXY_PATH_PATTERN.matcher(path).matches();
+        return RustCore.proxyIsValidWebPath(path);
     }
 
     private static boolean isValidWebProxySecret(String secret) {
-        if (secret == null) {
-            return false;
-        }
-        if (secret.length() == 32) {
-            return isHex(secret, 0);
-        }
-        return secret.length() == 34
-                && secret.regionMatches(true, 0, "dd", 0, 2)
-                && isHex(secret, 2);
-    }
-
-    private static boolean isHex(String value, int offset) {
-        for (int i = offset; i < value.length(); i++) {
-            if (Character.digit(value.charAt(i), 16) < 0) {
-                return false;
-            }
-        }
-        return true;
+        return RustCore.proxyIsValidWebSecret(secret);
     }
 
     private static String decodeMarkedWebProxySecret(String secret) {
-        if (TextUtils.isEmpty(secret)
-                || !WEB_PROXY_MARKED_SECRET_PATTERN.matcher(secret).matches()) {
-            return null;
-        }
-
-        try {
-            final byte[] marked = Base64.decode(secret, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
-            if (marked.length < 17 || (marked[0] & 0xff) != WEB_PROXY_PATH_SECRET_MARKER) {
-                return null;
-            }
-
-            final String decoded = bytesToHex(marked, 1);
-            if (!isValidWebProxySecret(decoded)) {
-                return null;
-            }
-
-            // Reject padded and other non-canonical encodings of the same bytes.
-            final String canonical = Base64.encodeToString(marked,
-                    Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
-            return canonical.equals(secret) ? decoded : null;
-        } catch (IllegalArgumentException ignored) {
-            return null;
-        }
+        return RustCore.proxyDecodeMarkedSecret(secret);
     }
 
     private static String encodeMarkedWebProxySecret(String secret) {
-        if (!isValidWebProxySecret(secret)) {
-            return secret;
-        }
-
-        final byte[] decoded = hexToBytes(secret);
-        final byte[] marked = new byte[decoded.length + 1];
-        marked[0] = WEB_PROXY_PATH_SECRET_MARKER;
-        System.arraycopy(decoded, 0, marked, 1, decoded.length);
-        return Base64.encodeToString(marked, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
-    }
-
-    private static byte[] hexToBytes(String value) {
-        final byte[] result = new byte[value.length() / 2];
-        for (int i = 0; i < result.length; i++) {
-            result[i] = (byte) ((Character.digit(value.charAt(i * 2), 16) << 4)
-                    | Character.digit(value.charAt(i * 2 + 1), 16));
-        }
-        return result;
-    }
-
-    private static String bytesToHex(byte[] value, int offset) {
-        final char[] result = new char[(value.length - offset) * 2];
-        final char[] digits = "0123456789abcdef".toCharArray();
-        for (int i = offset; i < value.length; i++) {
-            final int b = value[i] & 0xff;
-            final int resultOffset = (i - offset) * 2;
-            result[resultOffset] = digits[b >>> 4];
-            result[resultOffset + 1] = digits[b & 0x0f];
-        }
-        return new String(result);
+        String encoded = RustCore.proxyEncodeMarkedSecret(secret);
+        return encoded != null ? encoded : secret;
     }
 
     public static int typeToInt(Type type) {
