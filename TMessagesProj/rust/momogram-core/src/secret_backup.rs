@@ -142,6 +142,26 @@ mod tests {
     }
 
     #[test]
+    fn binary_backup_preserves_empty_media_row_presence() {
+        let mut state = sample_state();
+        let message = state["messages_by_chat"][0]["messages"][0]
+            .as_object_mut()
+            .unwrap();
+        message.remove("med_data");
+        message.insert("med_present".to_owned(), json!(true));
+        message.insert("med_type".to_owned(), json!(6));
+        message.insert("med_date".to_owned(), json!(7));
+
+        let payload = encode_binary(&state).unwrap();
+        let decoded = decode_binary(&payload, VERSION).unwrap();
+        let message = &decoded["messages_by_chat"][0]["messages"][0];
+        assert_eq!(message["med_present"], true);
+        assert!(message.get("med_data").is_none());
+        assert_eq!(message["med_type"], 6);
+        assert_eq!(message["med_date"], 7);
+    }
+
+    #[test]
     fn encrypted_json_backup_roundtrips() {
         let state = sample_state();
         let file = encode_backup("password", FORMAT_JSON, &state.to_string()).unwrap();
