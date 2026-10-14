@@ -64,6 +64,7 @@ import moe.hx030.momogram.util.ModUtil;
 import moe.hx030.momogram.utils.FileUtil;
 import moe.hx030.momogram.utils.ShareUtil;
 import moe.hx030.momogram.utils.StrUtil;
+import moe.hx030.momogram.utils.RustCore;
 
 import static moe.hx030.momogram.config.ConfigItem.*;
 import static moe.hx030.momogram.utils.StrUtil.getAppName;
@@ -428,7 +429,7 @@ public class MomoConfig {
             "群发|纸飞机|跑U|棋牌|招商|变现|群發|稳赚|全网").setOnConfigChanged(MomoConfig::applyAutoBanByRegex);
     public static ConfigItem autoDismissDummy = addConfig(R.string.AutoDismissReqDummy, "AutoDismissReqDummy", configTypeBool, ANTI_SPAM, false);
     public static String autoDismissRegexString;
-    public static Pattern autoDismissRegexPattern;
+    public static String autoDismissRegexPattern;
     public static ConfigItem autoDismissSuggestedChats = addConfig(R.string.AutoDismissSuggestedChats, "AutoDismissSuggestedChats", configTypeInt, ANTI_SPAM, AUTO_DISMISS_DISABLED);
     public static String[] autoDismissSuggestedChatsOptions = null;
 
@@ -1006,7 +1007,12 @@ public class MomoConfig {
             Log.d("030-autoban", "new regex: null");
             return;
         }
-        autoDismissRegexPattern = Pattern.compile(autoDismissRegexString);
+        if (!RustCore.filterRegexValid(autoDismissRegexString)) {
+            autoDismissRegexPattern = null;
+            Log.e("030-autoban", "invalid Rust regex: " + autoDismissRegexString);
+            return;
+        }
+        autoDismissRegexPattern = autoDismissRegexString;
         Log.d("030-autoban", "new regex: " + autoDismissRegexString);
     }
 

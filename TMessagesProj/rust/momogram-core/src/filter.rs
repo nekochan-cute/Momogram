@@ -99,6 +99,10 @@ pub fn take_pending_ids() -> Vec<i64> {
     ids
 }
 
+pub fn validate_regex(pattern: &str, flags: i32) -> bool {
+    compile_javaish_regex(pattern, flags).is_ok()
+}
+
 pub fn matches(pattern: &str, flags: i32, text: &str, use_opencc: bool) -> Result<bool, String> {
     let regex = compile_javaish_regex(pattern, flags)?;
     if regex.is_match(text).map_err(|e| e.to_string())? {
@@ -181,17 +185,17 @@ mod tests {
     }
 
     #[test]
-    fn java_only_regex_flags_request_jvm_fallback() {
-        assert!(compile_javaish_regex("abc", 0x01).is_err());
-        assert!(compile_javaish_regex("abc", 0x80).is_err());
-        assert!(compile_javaish_regex("abc", 0x100).is_err());
-        assert!(compile_javaish_regex("ä", 0x02).is_err());
+    fn filter_regex_validation_is_owned_by_rust() {
+        assert!(validate_regex(r"spam\\d+", 0));
+        assert!(!validate_regex("(", 0));
     }
 
     #[test]
-    fn unicode_case_insensitive_is_supported_when_java_requests_it() {
-        let regex = compile_javaish_regex("ä", 0x02 | 0x40).unwrap();
-        assert!(regex.is_match("Ä").unwrap());
+    fn unsupported_java_only_flags_are_rejected_in_rust() {
+        assert!(!validate_regex("abc", 0x01));
+        assert!(!validate_regex("abc", 0x80));
+        assert!(!validate_regex("abc", 0x100));
+        assert!(!validate_regex("ä", 0x02));
     }
 
     #[test]

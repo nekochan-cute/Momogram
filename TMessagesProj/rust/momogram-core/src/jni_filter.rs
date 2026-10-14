@@ -87,6 +87,18 @@ pub extern "system" fn Java_moe_hx030_momogram_utils_RustCore_nativeTakePendingI
 }
 
 #[no_mangle]
+pub extern "system" fn Java_moe_hx030_momogram_utils_RustCore_nativeFilterRegexValid(
+    mut env: JNIEnv,
+    _class: JClass,
+    pattern: JString,
+) -> jboolean {
+    match get_string(&mut env, &pattern) {
+        Ok(pattern) => bool_to_jni(filter::validate_regex(&pattern, 0)),
+        Err(_) => 0,
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_moe_hx030_momogram_utils_RustCore_nativeFilterMatches(
     mut env: JNIEnv,
     _class: JClass,

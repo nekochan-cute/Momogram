@@ -104,6 +104,9 @@ object RustCore {
     fun takePendingIds(): LongArray = nativeTakePendingIds()
 
     @JvmStatic
+    fun filterRegexValid(pattern: String): Boolean = nativeFilterRegexValid(pattern)
+
+    @JvmStatic
     fun filterMatches(pattern: String, flags: Int, text: String, useOpenCc: Boolean): Int =
         nativeFilterMatches(pattern, flags, text, useOpenCc)
 
@@ -160,6 +163,7 @@ object RustCore {
     @JvmStatic private external fun nativeBumpPendingId(senderId: Long)
     @JvmStatic private external fun nativePendingIsEmpty(): Boolean
     @JvmStatic private external fun nativeTakePendingIds(): LongArray
+    @JvmStatic private external fun nativeFilterRegexValid(pattern: String): Boolean
     @JvmStatic private external fun nativeFilterMatches(pattern: String, flags: Int, text: String, useOpenCc: Boolean): Int
     @JvmStatic private external fun nativeParseProxyUri(raw: String): String?
     @JvmStatic private external fun nativeProxyNormalizeWebAddress(address: String?): String

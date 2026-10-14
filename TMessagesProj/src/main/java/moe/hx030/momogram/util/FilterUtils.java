@@ -15,11 +15,8 @@ import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
 
 import java.util.ArrayList;
-import java.util.regex.Pattern;
 
 import moe.hx030.momogram.MomoConfig;
-import moe.hx030.momogram.cc.CCConverter;
-import moe.hx030.momogram.cc.CCTarget;
 import moe.hx030.momogram.utils.RustCore;
 
 public class FilterUtils {
@@ -149,27 +146,18 @@ public class FilterUtils {
         });
     }
 
-    public static boolean checkName(Pattern regex, String firstname, String lastname, boolean useOpenCC) {
+    public static boolean checkName(String regex, String firstname, String lastname, boolean useOpenCC) {
         if (regex == null) return false;
         if (matches(regex, firstname, useOpenCC)) return true;
         return !TextUtils.isEmpty(lastname) && matches(regex, lastname, useOpenCC);
     }
 
-    public static boolean checkString(Pattern regex, String str, boolean useOpenCC) {
+    public static boolean checkString(String regex, String str, boolean useOpenCC) {
         if (regex == null || TextUtils.isEmpty(str)) return false;
         return matches(regex, str, useOpenCC);
     }
 
-    private static boolean matches(Pattern regex, String text, boolean useOpenCC) {
-        int result = RustCore.filterMatches(regex.pattern(), regex.flags(), text, useOpenCC);
-        if (result >= 0) return result == 1;
-        // Compatibility fallback only for Java-regex constructs unsupported by the Rust engine.
-        if (regex.matcher(text).find()) return true;
-        if (useOpenCC) {
-            for (CCTarget target : new CCTarget[]{CCTarget.TC, CCTarget.SC}) {
-                if (regex.matcher(CCConverter.get(target).convert(text)).find()) return true;
-            }
-        }
-        return false;
+    private static boolean matches(String regex, String text, boolean useOpenCC) {
+        return RustCore.filterMatches(regex, 0, text, useOpenCC) == 1;
     }
 }
