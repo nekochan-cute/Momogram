@@ -84,8 +84,9 @@ pub fn replace_all_regex(content: &str, pattern: &str, replacement: Option<&str>
 
 fn expand_groups(template: &str, captures: &fancy_regex::Captures<'_>) -> Result<Option<String>, String> {
     let bytes = template.as_bytes();
-    let mut out = String::with_capacity(template.len());
-    let mut i = 0;
+    let mut tokens: Vec<&str> = Vec::new();
+    let mut i = 0usize;
+
     while i < bytes.len() {
         if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
             let start = i + 1;
@@ -93,27 +94,41 @@ fn expand_groups(template: &str, captures: &fancy_regex::Captures<'_>) -> Result
             while end < bytes.len() && bytes[end].is_ascii_digit() {
                 end += 1;
             }
-            let group: usize = template[start..end]
-                .parse()
-                .map_err(|_| "invalid replacement group".to_owned())?;
-            if group >= captures.len() {
-                return Err(format!("replacement group ${group} is out of range"));
+            let token = &template[start..end];
+            if !tokens.contains(&token) {
+                tokens.push(token);
             }
-            let Some(value) = captures.get(group) else {
-                return Ok(None);
-            };
-            out.push_str(value.as_str());
             i = end;
         } else {
             let ch = template[i..]
                 .chars()
                 .next()
                 .ok_or_else(|| "invalid UTF-8 replacement offset".to_owned())?;
-            out.push(ch);
             i += ch.len_utf8();
         }
     }
-    Ok(Some(out))
+
+    // Kotlin uses a TreeSet ordered by descending token length, then
+    // descending lexical order, and String.replace for each group token.
+    tokens.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| b.cmp(a)));
+
+    let mut replacement = template.to_owned();
+    for token in tokens {
+        let group: usize = token
+            .parse()
+            .map_err(|_| "invalid replacement group".to_owned())?;
+        if group >= captures.len() {
+            return Err(format!("replacement group ${group} is out of range"));
+        }
+        let Some(value) = captures.get(group) else {
+            // Legacy Kotlin makes the nullable replacement null here. The
+            // safe equivalent is to leave this whole match unchanged.
+            return Ok(None);
+        };
+        replacement = replacement.replace(&format!("${token}"), value.as_str());
+    }
+
+    Ok(Some(replacement))
 }
 
 pub fn escape(content: &str) -> String {
@@ -274,6 +289,13 @@ mod tests {
         );
     }
 
+    #[test]
+    fn replacement_uses_legacy_descending_group_token_order() {
+        assert_eq!(
+            replace_all_regex("a$1", r"(a)(\$1)", Some("$2-$1")).unwrap(),
+            "a-a"
+        );
+    }
     #[test]
     fn mentions_report_utf16_ranges() {
         assert_eq!(mention_ranges("😀 @abc x"), vec![3, 7]);
