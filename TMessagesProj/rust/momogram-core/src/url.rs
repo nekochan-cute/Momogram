@@ -39,13 +39,16 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
         return src.to_owned();
     }
 
-    if TWITTER_DOMAINS.contains(&parsed.host) || TWITTER_PREVIEW_DOMAINS.contains(&parsed.host) {
-        let host = if patch_links { "twitter.com" } else { parsed.host };
+    // android.net.Uri.getHost() percent-decodes the encoded authority host.
+    let decoded_host = percent_decode_query_component(parsed.host, false);
+
+    if TWITTER_DOMAINS.contains(&decoded_host.as_str()) || TWITTER_PREVIEW_DOMAINS.contains(&decoded_host.as_str()) {
+        let host = if patch_links { "twitter.com" } else { decoded_host.as_str() };
         return format!("https://{host}{}", android_builder_path(parsed.path));
     }
 
-    if YOUTUBE_DOMAINS.contains(&parsed.host) {
-        let mut out = format!("https://{}{}", parsed.host, android_builder_path(parsed.path));
+    if YOUTUBE_DOMAINS.contains(&decoded_host.as_str()) {
+        let mut out = format!("https://{}{}", decoded_host, android_builder_path(parsed.path));
         if let Some(query) = parsed.query {
             if let Some(value) = android_get_query_parameter(query, "t") {
                 out.push_str("?t=");
@@ -58,7 +61,7 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
     let mut out = String::new();
     out.push_str(parsed.scheme);
     out.push_str("://");
-    out.push_str(parsed.host);
+    out.push_str(&decoded_host);
     if let Some(port) = parsed.port {
         let is_default = (parsed.scheme == "http" && port == 80) || (parsed.scheme == "https" && port == 443);
         if !is_default {
@@ -310,6 +313,18 @@ mod tests {
     fn strip_all_queries_matches_legacy_last_question_mark_behavior() {
         assert_eq!(super::strip_all_queries("https://example.com/a?x=?y"), "https://example.com/a?x=");
         assert_eq!(super::strip_all_queries("https://example.com/a"), "https://example.com/a");
+    }
+
+    #[test]
+    fn percent_decodes_host_like_android_uri() {
+        assert_eq!(
+            clean_url("https://%65xample.com/a?x=1", true, &[]),
+            "https://example.com/a?x=1"
+        );
+        assert_eq!(
+            clean_url("https://%74witter.com/user/status/1?x=1", true, &[]),
+            "https://twitter.com/user/status/1"
+        );
     }
 
     #[test]
