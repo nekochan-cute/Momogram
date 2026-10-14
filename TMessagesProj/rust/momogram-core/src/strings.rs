@@ -248,12 +248,8 @@ pub fn append_csv(original: Option<&str>, addition: &str) -> String {
 }
 
 pub fn randomize_file_name(name: &str) -> Result<String, String> {
-    let ext = name
-        .rfind('.')
-        .and_then(|dot| name.get(dot + 1..))
-        .filter(|ext| !ext.is_empty());
-    let capacity = 6 + ext.map_or(0, |ext| ext.len() + 1);
-    let mut out = String::with_capacity(capacity);
+    let ext = name.rfind('.').map(|dot| &name[dot..]).unwrap_or("");
+    let mut out = String::with_capacity(6 + ext.len());
     let acceptance_limit = (u8::MAX as usize + 1) / RANDOM_CHARS.len() * RANDOM_CHARS.len();
 
     while out.len() < 6 {
@@ -270,10 +266,7 @@ pub fn randomize_file_name(name: &str) -> Result<String, String> {
         }
     }
 
-    if let Some(ext) = ext {
-        out.push('.');
-        out.push_str(ext);
-    }
+    out.push_str(ext);
     Ok(out)
 }
 
@@ -393,10 +386,10 @@ mod tests {
     }
 
     #[test]
-    fn random_name_drops_empty_trailing_extension_like_kotlin() {
+    fn random_name_preserves_trailing_dot_like_kotlin() {
         let value = randomize_file_name("photo.").unwrap();
-        assert_eq!(value.len(), 6);
-        assert!(!value.ends_with('.'));
+        assert_eq!(value.len(), 7);
+        assert!(value.ends_with('.'));
     }
 
     #[test]
