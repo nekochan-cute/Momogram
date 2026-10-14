@@ -10,7 +10,7 @@ buildscript {
         classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.10'
 //        classpath 'com.google.gms:google-services:4.3.15'
 //        classpath 'com.google.firebase:firebase-crashlytics-gradle:2.9.2'
-        classpath 'gradle.plugin.org.mozilla.rust-android-gradle:plugin:0.9.0'
+        classpath 'gradle.plugin.org.mozilla.rust-android-gradle:plugin:0.10.0'
         //noinspection GradleDependency
         // classpath "com.github.triplet.gradle:play-publisher:3.6.0" // no more gplay build
         // This is needed since android-connector:2.2.0 is built with Java 17
@@ -68,6 +68,24 @@ allprojects {
                     }
                 }
             }
+        }
+    }
+}
+
+project(':TMessagesProj') {
+    apply plugin: 'org.mozilla.rust-android-gradle.rust-android'
+
+    cargo {
+        module = "rust/momogram-core"
+        libname = "momogram_core"
+        targets = ["arm", "arm64", "x86", "x86_64"]
+        apiLevel = 21
+        profile = "release"
+    }
+
+    afterEvaluate {
+        tasks.named("preBuild").configure {
+            dependsOn tasks.named("cargoBuild")
         }
     }
 }

@@ -32,12 +32,26 @@ object UrlUtil {
 
     @JvmStatic
     fun cleanUrl(src: String): String {
-        return cleanUrl(Uri.parse(src)).toString()
+        return cleanUrlInRust(src) ?: cleanUrlLegacy(Uri.parse(src)).toString()
     }
 
     @JvmStatic
     fun cleanUrl(src: Uri): Uri {
-        if (!src.scheme!!.startsWith("http")) return src
+        val cleaned = cleanUrlInRust(src.toString())
+        return if (cleaned != null) Uri.parse(cleaned) else cleanUrlLegacy(src)
+    }
+
+    private fun cleanUrlInRust(src: String): String? {
+        return RustCore.cleanUrl(
+            src,
+            MomoConfig.patchAndCleanupLinks.Bool(),
+            MomoConfig.customGetQueryBlacklistData.joinToString("\n")
+        )
+    }
+
+    private fun cleanUrlLegacy(src: Uri): Uri {
+        val scheme = src.scheme ?: return src
+        if (!scheme.startsWith("http")) return src
         if (isTwitter(src.host.toString()) || isTwitterPreview(src.host.toString())) {
             var host = src.host
             if (MomoConfig.patchAndCleanupLinks.Bool()) {
@@ -85,6 +99,7 @@ object UrlUtil {
 
     @JvmStatic
     fun stripAllQueries(src: String): String {
-        return src.substring(0, src.lastIndexOf("?"))
+        val queryStart = src.indexOf('?')
+        return if (queryStart >= 0) src.substring(0, queryStart) else src
     }
 }
