@@ -1,16 +1,21 @@
 package moe.hx030.momogram.cc
 
-import java.util.*
-import kotlin.collections.HashMap
+import moe.hx030.momogram.utils.RustCore
+import org.telegram.messenger.ApplicationLoader
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
-class CCConverter(val target: CCTarget) {
+class CCConverter private constructor(val target: CCTarget) {
 
     companion object {
-
-        val instances = HashMap<CCTarget, CCConverter>()
+        private val instances = HashMap<CCTarget, CCConverter>()
+        private val initialized = AtomicBoolean(false)
+        private val initLock = Any()
 
         @JvmStatic
         fun get(target: CCTarget): CCConverter {
+            ensureRustOpenCc()
             return instances[target] ?: synchronized(instances) {
                 instances[target] ?: CCConverter(target).also {
                     instances[target] = it
@@ -18,114 +23,32 @@ class CCConverter(val target: CCTarget) {
             }
         }
 
-    }
+        private fun ensureRustOpenCc() {
+            if (initialized.get()) return
+            synchronized(initLock) {
+                if (initialized.get()) return
 
-    val tries = LinkedList<AhoCorasickDoubleArrayTrie<String>>()
-
-    private fun addTrie(dicts: Array<CCDict>, revDicts: Array<CCDict> = arrayOf()) {
-        val storage = TreeMap<String, LinkedList<String>>()
-        for (dictionary in dicts) {
-            dictionary.postInit()
-            storage.putAll(dictionary.storage)
-        }
-        for (dictionary in revDicts) {
-            dictionary.postInit()
-            val revMap = HashMap<String, LinkedList<String>>()
-            dictionary.storage.forEach { (key, value) ->
-                value.forEach {
-                    revMap.getOrPut(it) { LinkedList() }.add(key)
+                val assets = ApplicationLoader.applicationContext.assets
+                val buffer = ByteArrayOutputStream()
+                DataOutputStream(buffer).use { out ->
+                    val dicts = CCDict.entries
+                    out.writeInt(dicts.size)
+                    for (dict in dicts) {
+                        val name = dict.name.toByteArray(Charsets.UTF_8)
+                        val content = assets.open("dictionary/${dict.name}.txt").use { it.readBytes() }
+                        out.writeInt(name.size)
+                        out.write(name)
+                        out.writeInt(content.size)
+                        out.write(content)
+                    }
                 }
-            }
-            storage.putAll(revMap)
-        }
-        tries.add(AhoCorasickDoubleArrayTrie<String>().apply {
-            build(TreeMap(mapOf(* storage.mapNotNull { it.key to it.value[0] }.toTypedArray())))
-        })
-    }
-
-    init {
-
-        when (target) {
-            CCTarget.SC -> {
-                addTrie(arrayOf(
-                        CCDict.JPShinjitaiCharacters,
-                        CCDict.JPVariantsRev
-                ))
-                addTrie(arrayOf(
-                        CCDict.TSCharacters
-                ))
-            }
-            CCTarget.SP -> {
-                addTrie(arrayOf(
-                        CCDict.JPShinjitaiCharacters,
-                        CCDict.JPShinjitaiPhrases,
-                        CCDict.JPVariantsRev,
-                        CCDict.HKVariantsRev,
-                        CCDict.HKVariantsRevPhrases,
-                        CCDict.TWVariantsRev,
-                        CCDict.TWPhrasesRev,
-                        CCDict.TWVariantsRevPhrases
-                ))
-                addTrie(arrayOf(
-                        CCDict.TSCharacters,
-                        CCDict.TSPhrases
-                ))
-            }
-            CCTarget.TC -> {
-                addTrie(arrayOf(
-                        CCDict.JPShinjitaiCharacters,
-                        CCDict.JPVariantsRev,
-                        CCDict.STCharacters,
-                        CCDict.STPhrases
-                ))
-            }
-            CCTarget.TT -> {
-                addTrie(arrayOf(
-                        CCDict.JPShinjitaiCharacters,
-                        CCDict.JPShinjitaiPhrases,
-                        CCDict.JPVariantsRev,
-                        CCDict.STCharacters,
-                        CCDict.STPhrases
-                ))
-                addTrie(arrayOf(
-                        CCDict.TWVariants,
-                        CCDict.TWPhrasesIT,
-                        CCDict.TWPhrasesName,
-                        CCDict.TWPhrasesOther
-                ))
-            }
-            CCTarget.HK -> {
-                addTrie(arrayOf(
-                        CCDict.JPShinjitaiCharacters,
-                        CCDict.JPShinjitaiPhrases,
-                        CCDict.JPVariantsRev,
-                        CCDict.STCharacters,
-                        CCDict.STPhrases
-                ))
-                addTrie(arrayOf(
-                        CCDict.HKVariants
-                ))
-            }
-            CCTarget.JP -> {
-                addTrie(arrayOf(
-                        CCDict.STCharacters,
-                        CCDict.STPhrases
-                ))
-                addTrie(arrayOf(
-                        CCDict.JPVariants,
-                        CCDict.JPShinjitaiCharacters,
-                        CCDict.JPShinjitaiPhrases
-                ))
+                check(RustCore.initOpenCc(buffer.toByteArray())) {
+                    "Rust OpenCC initialization failed"
+                }
+                initialized.set(true)
             }
         }
     }
 
-    fun convert(input: String): String {
-        var result = input
-        for (trie in tries) {
-            result = OpenCCUtil.segLongest(result.toCharArray(), trie)
-        }
-        return result
-    }
-
+    fun convert(input: String): String = RustCore.openCcConvert(target.ordinal, input)
 }
