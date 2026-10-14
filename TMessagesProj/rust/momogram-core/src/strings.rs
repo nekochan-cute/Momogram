@@ -143,13 +143,20 @@ pub fn first_char_upper(value: Option<&str>) -> Option<String> {
     if value.trim().is_empty() {
         return Some(value.to_owned());
     }
-    let mut chars = value.chars();
-    let first = chars.next()?;
-    let upper = simple_uppercase(first);
-    let mut out = String::with_capacity(value.len());
-    out.push(upper);
-    out.push_str(chars.as_str());
-    Some(out)
+
+    // Kotlin's String[index] operates on UTF-16 code units. Preserve that
+    // behavior instead of uppercasing a whole Unicode scalar value.
+    let mut units: Vec<u16> = value.encode_utf16().collect();
+    let first = *units.first()?;
+    if !(0xD800..=0xDFFF).contains(&first) {
+        if let Some(ch) = char::from_u32(first as u32) {
+            let upper = simple_uppercase(ch) as u32;
+            if upper <= u16::MAX as u32 {
+                units[0] = upper as u16;
+            }
+        }
+    }
+    Some(String::from_utf16_lossy(&units))
 }
 
 pub fn prefix_030(simple_name: &str) -> String {
@@ -270,8 +277,12 @@ mod tests {
     }
 
     #[test]
-    fn first_char_upper_matches_kotlin_one_to_one_mapping() {
+    fn first_char_upper_matches_kotlin_utf16_char_semantics() {
         assert_eq!(first_char_upper(Some("abc")).as_deref(), Some("Abc"));
+        assert_eq!(first_char_upper(Some("äbc")).as_deref(), Some("Äbc"));
         assert_eq!(first_char_upper(Some("ßeta")).as_deref(), Some("ßeta"));
+        // Kotlin uppercases only str[0], the high surrogate, so a supplementary
+        // lowercase letter is left unchanged rather than uppercased as a scalar.
+        assert_eq!(first_char_upper(Some("𐐨bc")).as_deref(), Some("𐐨bc"));
     }
 }
