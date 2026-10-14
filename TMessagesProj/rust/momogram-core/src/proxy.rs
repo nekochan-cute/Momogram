@@ -4,7 +4,7 @@ use idna::domain_to_ascii;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
-use url::{form_urlencoded, Url};
+use url::Url;
 
 const WEB_PROXY_PATH_SECRET_MARKER: u8 = 0x70;
 
@@ -53,12 +53,7 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
         return None;
     };
 
-    let params: Vec<(String, String)> = form_urlencoded::parse(query.as_bytes()).into_owned().collect();
-    let get = |name: &str| {
-        params
-            .iter()
-            .find_map(|(key, value)| (key == name).then(|| value.clone()))
-    };
+    let get = |name: &str| get_query_parameter(&query, name);
 
     let mut address = get("server").or_else(|| get("host")).unwrap_or_default();
     if proxy_type != 2 && !address.is_empty() {
@@ -148,6 +143,45 @@ pub fn is_valid_web_address(address: &str) -> bool {
 
 fn has_web_proxy_path(address: &str) -> bool {
     address.contains('/')
+}
+
+fn get_query_parameter(query: &str, name: &str) -> Option<String> {
+    for pair in query.split('&') {
+        let (raw_name, raw_value) = pair
+            .split_once('=')
+            .map_or((pair, ""), |(key, value)| (key, value));
+        if raw_name == name {
+            return Some(percent_decode_uri_component(raw_value));
+        }
+    }
+    None
+}
+
+fn percent_decode_uri_component(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_nibble(bytes[i + 1]), hex_nibble(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn path_regex() -> &'static Regex {
@@ -247,6 +281,15 @@ mod tests {
         assert_eq!(proxy.address, "example.com");
         assert_eq!(proxy.port, 1080);
         assert_eq!(proxy.user, "u");
+    }
+
+    #[test]
+    fn query_values_preserve_plus_like_android_uri() {
+        let proxy = parse_proxy_uri(
+            "tg://socks?server=example.com&port=1080&user=a+b&pass=x%2By"
+        ).unwrap();
+        assert_eq!(proxy.user, "a+b");
+        assert_eq!(proxy.password, "x+y");
     }
 
     #[test]

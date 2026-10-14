@@ -47,13 +47,9 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
     if YOUTUBE_DOMAINS.contains(&parsed.host) {
         let mut out = format!("https://{}{}", parsed.host, parsed.path);
         if let Some(query) = parsed.query {
-            if let Some((name, value)) = first_query_pair(query, "t") {
-                out.push('?');
-                out.push_str(name);
-                if let Some(value) = value {
-                    out.push('=');
-                    out.push_str(value);
-                }
+            if let Some(value) = first_query_value(query, "t") {
+                out.push_str("?t=");
+                out.push_str(&uri_encode_component(&value));
             }
         }
         return out;
@@ -93,9 +89,16 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
                 continue;
             }
 
+            let raw_value = raw_pair
+                .split_once('=')
+                .map_or("", |(_, value)| value);
+            let decoded_value = percent_decode_query_component(raw_value);
+
             out.push(if first { '?' } else { '&' });
             first = false;
-            out.push_str(raw_pair);
+            out.push_str(&uri_encode_component(&decoded_name));
+            out.push('=');
+            out.push_str(&uri_encode_component(&decoded_value));
         }
     }
 
@@ -107,13 +110,13 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
     out
 }
 
-fn first_query_pair<'a>(query: &'a str, wanted_name: &str) -> Option<(&'a str, Option<&'a str>)> {
+fn first_query_value(query: &str, wanted_name: &str) -> Option<String> {
     for raw_pair in query.split('&') {
         let (raw_name, raw_value) = raw_pair
             .split_once('=')
-            .map_or((raw_pair, None), |(name, value)| (name, Some(value)));
+            .map_or((raw_pair, ""), |(name, value)| (name, value));
         if percent_decode_query_component(raw_name) == wanted_name {
-            return Some((raw_name, raw_value));
+            return Some(percent_decode_query_component(raw_value));
         }
     }
     None
@@ -175,10 +178,6 @@ fn percent_decode_query_component(input: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
             b'%' if i + 2 < bytes.len() => {
                 if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
                     out.push((hi << 4) | lo);
@@ -195,6 +194,23 @@ fn percent_decode_query_component(input: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+fn uri_encode_component(input: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(input.len());
+    for &byte in input.as_bytes() {
+        let allowed = byte.is_ascii_alphanumeric()
+            || matches!(byte, b'_' | b'-' | b'!' | b'.' | b'~' | b'\'' | b'(' | b')' | b'*');
+        if allowed {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    out
 }
 
 fn hex(value: u8) -> Option<u8> {
@@ -264,6 +280,22 @@ mod tests {
         assert_eq!(
             clean_url("https://example.com/?utm%5Fsource=x&ok=1", true, &[]),
             "https://example.com/?ok=1"
+        );
+    }
+
+    #[test]
+    fn canonicalizes_query_like_android_uri_builder() {
+        assert_eq!(
+            clean_url("https://example.com/?q=a+b&flag", true, &[]),
+            "https://example.com/?q=a%2Bb&flag="
+        );
+    }
+
+    #[test]
+    fn youtube_timestamp_preserves_plus_as_literal_plus() {
+        assert_eq!(
+            clean_url("https://youtube.com/watch?t=1+2", true, &[]),
+            "https://youtube.com/watch?t=1%2B2"
         );
     }
 
