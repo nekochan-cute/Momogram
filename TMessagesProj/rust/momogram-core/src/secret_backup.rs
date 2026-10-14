@@ -210,6 +210,71 @@ mod tests {
         }
     }
 
+    fn nonempty_legacy_message_payload(version: i32) -> Vec<u8> {
+        let state = json!({
+            "messages_by_chat": [{
+                "uid": 7,
+                "messages": [{
+                    "mid": 42,
+                    "date": 2,
+                    "data": STANDARD.encode([9]),
+                    "random_id": 3,
+                    "med_present": true,
+                    "med_data": STANDARD.encode([4, 5]),
+                    "med_type": 6,
+                    "med_date": 7
+                }]
+            }]
+        });
+        let mut payload = encode_binary(&state).unwrap();
+
+        // v1/v2 predate the dialog_settings collection. The current encoder
+        // ends this fixture with five i32 fields: dialogs, dialog_settings,
+        // users, params-present, requested_holes.
+        let dialog_settings = payload.len() - 16;
+        payload.drain(dialog_settings..dialog_settings + 4);
+
+        if version == 1 {
+            // This fixture has one chat and one message. Its row length is at
+            // byte 16 and the v2+ media section is the tail of that row.
+            let row_len = i32::from_le_bytes(payload[16..20].try_into().unwrap()) as usize;
+            let marker = 20 + row_len - 18;
+            let media_len =
+                i32::from_le_bytes(payload[marker + 4..marker + 8].try_into().unwrap()) as usize;
+            let media_end = marker + 4 + 4 + media_len + 4 + 4;
+            payload.drain(marker..media_end);
+            let new_len = row_len - (media_end - marker);
+            payload[16..20].copy_from_slice(&(new_len as i32).to_le_bytes());
+        }
+
+        payload
+    }
+
+    #[test]
+    fn decodes_nonempty_legacy_v1_message() {
+        let payload = nonempty_legacy_message_payload(1);
+        let file = legacy_file(1, FORMAT_BINARY, "password", &payload, PBKDF2_ITERATIONS);
+        let decoded: Value = serde_json::from_str(&decode_backup("password", &file).unwrap()).unwrap();
+        let message = &decoded["messages_by_chat"][0]["messages"][0];
+        assert_eq!(message["mid"], 42);
+        assert_eq!(message["data"], STANDARD.encode([9]));
+        assert!(message.get("med_present").is_none());
+        assert!(message.get("med_data").is_none());
+    }
+
+    #[test]
+    fn decodes_nonempty_legacy_v2_media_row() {
+        let payload = nonempty_legacy_message_payload(2);
+        let file = legacy_file(2, FORMAT_BINARY, "password", &payload, PBKDF2_ITERATIONS);
+        let decoded: Value = serde_json::from_str(&decode_backup("password", &file).unwrap()).unwrap();
+        let message = &decoded["messages_by_chat"][0]["messages"][0];
+        assert_eq!(message["mid"], 42);
+        assert_eq!(message["med_present"], true);
+        assert_eq!(message["med_data"], STANDARD.encode([4, 5]));
+        assert_eq!(message["med_type"], 6);
+        assert_eq!(message["med_date"], 7);
+    }
+
     #[test]
     fn decodes_legacy_v3_binary_with_old_iteration_count() {
         let state = sample_state();
