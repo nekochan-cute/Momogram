@@ -225,7 +225,7 @@ mod tests {
         let dicts = [
             ("JPShinjitaiCharacters", "台\t臺\n"),
             ("JPVariantsRev", ""),
-            ("TSCharacters", "臺\t台\n"),
+            ("TSCharacters", "臺\t台\n灣\t湾\n"),
         ];
         let mut bundle = Vec::new();
         bundle.extend_from_slice(&(dicts.len() as u32).to_be_bytes());
