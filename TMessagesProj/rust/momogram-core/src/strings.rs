@@ -57,12 +57,14 @@ pub fn replace_all_regex(content: &str, pattern: &str, replacement: Option<&str>
     if content.is_empty() {
         return Ok(String::new());
     }
+
+    // Legacy Kotlin compiles the Pattern before inspecting a nullable
+    // replacement template, so invalid regex syntax must still surface.
+    let wrapped = format!("(?s:{pattern})");
+    let regex = Regex::new(&wrapped).map_err(|e| e.to_string())?;
     let Some(template) = replacement else {
         return Ok(content.to_owned());
     };
-
-    let wrapped = format!("(?s:{pattern})");
-    let regex = Regex::new(&wrapped).map_err(|e| e.to_string())?;
     let mut out = String::with_capacity(content.len());
     let mut last = 0;
 
@@ -266,6 +268,15 @@ mod tests {
     #[test]
     fn substring_uses_jvm_utf16_offsets() {
         assert_eq!(get_sub_string("😀<hello>😀", Some("<"), Some(">"), false), "hello");
+    }
+
+    #[test]
+    fn null_replacement_still_validates_pattern_like_kotlin() {
+        assert!(replace_all_regex("content", "(", None).is_err());
+        assert_eq!(
+            replace_all_regex("content", "valid", None).unwrap(),
+            "content"
+        );
     }
 
     #[test]
