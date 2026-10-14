@@ -72,14 +72,17 @@ pub fn replace_all_regex(content: &str, pattern: &str, replacement: Option<&str>
             .get(0)
             .ok_or_else(|| "regex match is missing group 0".to_owned())?;
         out.push_str(&content[last..whole.start()]);
-        out.push_str(&expand_groups(template, &captures)?);
+        match expand_groups(template, &captures)? {
+            Some(replacement) => out.push_str(&replacement),
+            None => out.push_str(whole.as_str()),
+        }
         last = whole.end();
     }
     out.push_str(&content[last..]);
     Ok(out)
 }
 
-fn expand_groups(template: &str, captures: &fancy_regex::Captures<'_>) -> Result<String, String> {
+fn expand_groups(template: &str, captures: &fancy_regex::Captures<'_>) -> Result<Option<String>, String> {
     let bytes = template.as_bytes();
     let mut out = String::with_capacity(template.len());
     let mut i = 0;
@@ -96,11 +99,10 @@ fn expand_groups(template: &str, captures: &fancy_regex::Captures<'_>) -> Result
             if group >= captures.len() {
                 return Err(format!("replacement group ${group} is out of range"));
             }
-            if let Some(value) = captures.get(group) {
-                out.push_str(value.as_str());
-            } else {
-                out.push_str(&template[i..end]);
-            }
+            let Some(value) = captures.get(group) else {
+                return Ok(None);
+            };
+            out.push_str(value.as_str());
             i = end;
         } else {
             let ch = template[i..]
@@ -111,7 +113,7 @@ fn expand_groups(template: &str, captures: &fancy_regex::Captures<'_>) -> Result
             i += ch.len_utf8();
         }
     }
-    Ok(out)
+    Ok(Some(out))
 }
 
 pub fn escape(content: &str) -> String {
@@ -257,10 +259,18 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_optional_group_stays_literal_like_kotlin() {
+    fn unmatched_optional_group_keeps_original_match_like_kotlin() {
         assert_eq!(
             replace_all_regex("b", r"(a)?b", Some("[$1]")).unwrap(),
-            "[$1]"
+            "b"
+        );
+    }
+
+    #[test]
+    fn unmatched_group_does_not_partially_expand_replacement() {
+        assert_eq!(
+            replace_all_regex("b", r"(a)?(b)", Some("$2-$1")).unwrap(),
+            "b"
         );
     }
 
