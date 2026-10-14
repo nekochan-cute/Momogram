@@ -196,11 +196,19 @@ impl<'a> Reader<'a> {
     }
 
     fn i32(&mut self) -> Result<i32, String> {
-        Ok(i32::from_le_bytes(self.exact(4)?.try_into().unwrap()))
+        let bytes: [u8; 4] = self
+            .exact(4)?
+            .try_into()
+            .map_err(|_| "Invalid int32 width in binary backup".to_owned())?;
+        Ok(i32::from_le_bytes(bytes))
     }
 
     fn i64(&mut self) -> Result<i64, String> {
-        Ok(i64::from_le_bytes(self.exact(8)?.try_into().unwrap()))
+        let bytes: [u8; 8] = self
+            .exact(8)?
+            .try_into()
+            .map_err(|_| "Invalid int64 width in binary backup".to_owned())?;
+        Ok(i64::from_le_bytes(bytes))
     }
 
     fn count(&mut self) -> Result<usize, String> {
@@ -225,7 +233,11 @@ impl<'a> Reader<'a> {
     }
 
     fn tl_string(&mut self) -> Result<String, String> {
-        let first = *self.exact(1)?.first().unwrap() as usize;
+        let first = self
+            .exact(1)?
+            .first()
+            .copied()
+            .ok_or_else(|| "Missing TL string length".to_owned())? as usize;
         let (len, header_len) = if first >= 254 {
             let extra = self.exact(3)?;
             (
