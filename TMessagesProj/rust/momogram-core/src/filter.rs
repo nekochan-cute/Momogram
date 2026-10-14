@@ -197,6 +197,12 @@ mod tests {
     }
 
     #[test]
+    fn opencc_filter_matching_needs_no_jvm_bootstrap() {
+        assert!(matches("台湾", 0, "臺灣", true).unwrap());
+        assert!(!matches("台湾", 0, "臺灣", false).unwrap());
+    }
+
+    #[test]
     fn pending_retry_counter_can_be_requeued_like_the_jvm_implementation() {
         let _ = take_pending_ids();
         bump_pending(77);
