@@ -58,18 +58,18 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
         return out;
     }
 
-    let append_port = parsed.port.is_some_and(|port| {
+    let retained_port = parsed.port.filter(|&port| {
         !((parsed.scheme == "http" && port == 80) || (parsed.scheme == "https" && port == 443))
     });
 
     let mut out = String::new();
     out.push_str(parsed.scheme);
     out.push_str("://");
-    if append_port {
+    if let Some(port) = retained_port {
         // Legacy code uses encodedAuthority when retaining a non-default port.
         out.push_str(&decoded_host);
         out.push(':');
-        out.push_str(&parsed.port.unwrap().to_string());
+        out.push_str(&port.to_string());
     } else {
         // Legacy code uses authority(host), which runs Uri.encode(host).
         out.push_str(&uri_encode_component(&decoded_host));
