@@ -120,7 +120,7 @@ fn query_parameter_names(query: &str) -> Vec<String> {
             break;
         }
         start = end + 1;
-        if start > query.len() {
+        if start >= query.len() {
             break;
         }
     }
@@ -150,7 +150,7 @@ fn android_get_query_parameter(query: &str, wanted_name: &str) -> Option<String>
             break;
         }
         start = end + 1;
-        if start > query.len() {
+        if start >= query.len() {
             break;
         }
     }
@@ -336,6 +336,14 @@ mod tests {
         assert_eq!(
             clean_url("https://youtube.com/watch?t=1+2", true, &[]),
             "https://youtube.com/watch?t=1%202"
+        );
+    }
+
+    #[test]
+    fn trailing_ampersand_does_not_add_empty_parameter() {
+        assert_eq!(
+            clean_url("https://example.com/?a=1&", true, &[]),
+            "https://example.com/?a=1"
         );
     }
 
