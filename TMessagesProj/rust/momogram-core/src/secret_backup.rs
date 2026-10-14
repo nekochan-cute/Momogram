@@ -149,4 +149,79 @@ mod tests {
         assert_eq!(decoded["_backup_format"], FORMAT_JSON);
         assert_eq!(decoded["users"][0]["uid"], 8);
     }
+
+    fn legacy_file(version: i32, format: i32, password: &str, payload: &[u8], iterations: u32) -> Vec<u8> {
+        let salt: [u8; SALT_SIZE] = core::array::from_fn(|i| i as u8);
+        let iv: [u8; IV_SIZE] = core::array::from_fn(|i| (i + SALT_SIZE) as u8);
+        let encrypted = encrypt(password, &salt, &iv, payload, iterations).unwrap();
+        let mut out = Vec::new();
+        out.extend_from_slice(HEADER);
+        out.extend_from_slice(&version.to_le_bytes());
+        out.extend_from_slice(&format.to_le_bytes());
+        out.extend_from_slice(&salt);
+        out.extend_from_slice(&iv);
+        out.extend_from_slice(&encrypted);
+        out
+    }
+
+    fn empty_legacy_binary(version: i32) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0i32.to_le_bytes()); // enc_chats
+        payload.extend_from_slice(&0i32.to_le_bytes()); // messages_by_chat
+        payload.extend_from_slice(&0i32.to_le_bytes()); // dialogs
+        if version >= 3 {
+            payload.extend_from_slice(&0i32.to_le_bytes()); // dialog_settings
+        }
+        payload.extend_from_slice(&0i32.to_le_bytes()); // users
+        payload.extend_from_slice(&0i32.to_le_bytes()); // params absent
+        payload.extend_from_slice(&0i32.to_le_bytes()); // requested_holes
+        payload
+    }
+
+    #[test]
+    fn decodes_legacy_binary_versions_1_and_2() {
+        for version in [1, 2] {
+            let payload = empty_legacy_binary(version);
+            let file = legacy_file(version, FORMAT_BINARY, "password", &payload, PBKDF2_ITERATIONS);
+            let decoded: Value = serde_json::from_str(&decode_backup("password", &file).unwrap()).unwrap();
+            assert_eq!(decoded["_backup_version"], version);
+            assert_eq!(decoded["enc_chats"].as_array().unwrap().len(), 0);
+            assert!(decoded["dialog_settings"].as_array().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn decodes_legacy_v3_binary_with_old_iteration_count() {
+        let state = sample_state();
+        let payload = encode_binary(&state).unwrap();
+        let file = legacy_file(3, FORMAT_BINARY, "password", &payload, PBKDF2_ITERATIONS_V3);
+        let decoded: Value = serde_json::from_str(&decode_backup("password", &file).unwrap()).unwrap();
+        assert_eq!(decoded["_backup_version"], 3);
+        assert_eq!(decoded["enc_chats"][0]["uid"], 7);
+        assert_eq!(decoded["dialog_settings"][0]["flags"], 123);
+    }
+
+    #[test]
+    fn java_pbkdf2_unicode_password_vector_matches() {
+        let salt: [u8; 16] = core::array::from_fn(|i| i as u8);
+        let mut key = [0u8; 32];
+        pbkdf2_hmac::<Sha256>("päss😀".as_bytes(), &salt, 10_000, &mut key);
+        assert_eq!(
+            key,
+            [
+                167, 237, 87, 251, 22, 89, 248, 183,
+                245, 4, 111, 196, 211, 60, 199, 17,
+                6, 233, 14, 55, 242, 210, 45, 7,
+                141, 191, 153, 14, 124, 170, 223, 69,
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_password_and_truncated_files() {
+        let state = sample_state();
+        let file = encode_backup("password", FORMAT_JSON, &state.to_string()).unwrap();
+        assert!(decode_backup("wrong", &file).is_err());
+        assert!(decode_backup("password", &file[..20]).is_err());
+    }
 }
