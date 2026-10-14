@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 type Dict = BTreeMap<String, String>;
-type DictSet = HashMap<&'static str, Dict>;
 
 struct Stage {
     automaton: AhoCorasick,
@@ -15,33 +14,44 @@ struct Converter {
     stages: Vec<Stage>,
 }
 
-const DICT_SOURCES: &[(&str, &str)] = &[
-    ("HKVariantsRevPhrases", include_str!("../../../src/main/assets/dictionary/HKVariantsRevPhrases.txt")),
-    ("HKVariantsRev", include_str!("../../../src/main/assets/dictionary/HKVariantsRev.txt")),
-    ("HKVariants", include_str!("../../../src/main/assets/dictionary/HKVariants.txt")),
-    ("JPShinjitaiCharacters", include_str!("../../../src/main/assets/dictionary/JPShinjitaiCharacters.txt")),
-    ("JPShinjitaiPhrases", include_str!("../../../src/main/assets/dictionary/JPShinjitaiPhrases.txt")),
-    ("JPVariantsRev", include_str!("../../../src/main/assets/dictionary/JPVariantsRev.txt")),
-    ("JPVariants", include_str!("../../../src/main/assets/dictionary/JPVariants.txt")),
-    ("STCharacters", include_str!("../../../src/main/assets/dictionary/STCharacters.txt")),
-    ("STPhrases", include_str!("../../../src/main/assets/dictionary/STPhrases.txt")),
-    ("TSCharacters", include_str!("../../../src/main/assets/dictionary/TSCharacters.txt")),
-    ("TSPhrases", include_str!("../../../src/main/assets/dictionary/TSPhrases.txt")),
-    ("TWPhrasesIT", include_str!("../../../src/main/assets/dictionary/TWPhrasesIT.txt")),
-    ("TWPhrasesName", include_str!("../../../src/main/assets/dictionary/TWPhrasesName.txt")),
-    ("TWPhrasesOther", include_str!("../../../src/main/assets/dictionary/TWPhrasesOther.txt")),
-    ("TWPhrasesRev", include_str!("../../../src/main/assets/dictionary/TWPhrasesRev.txt")),
-    ("TWVariantsRevPhrases", include_str!("../../../src/main/assets/dictionary/TWVariantsRevPhrases.txt")),
-    ("TWVariantsRev", include_str!("../../../src/main/assets/dictionary/TWVariantsRev.txt")),
-    ("TWVariants", include_str!("../../../src/main/assets/dictionary/TWVariants.txt")),
-];
+macro_rules! embedded_dicts {
+    ($( $static_name:ident => ($name:literal, $path:literal) ),+ $(,)?) => {
+        $(
+            static $static_name: Lazy<Dict> =
+                Lazy::new(|| parse_dictionary(include_str!($path)));
+        )+
 
-static DICTS: Lazy<DictSet> = Lazy::new(|| {
-    DICT_SOURCES
-        .iter()
-        .map(|(name, data)| (*name, parse_dictionary(data)))
-        .collect()
-});
+        fn dictionary(name: &str) -> Option<&'static Dict> {
+            match name {
+                $(
+                    $name => Some(&*$static_name),
+                )+
+                _ => None,
+            }
+        }
+    };
+}
+
+embedded_dicts! {
+    HK_VARIANTS_REV_PHRASES => ("HKVariantsRevPhrases", "../../../src/main/assets/dictionary/HKVariantsRevPhrases.txt"),
+    HK_VARIANTS_REV => ("HKVariantsRev", "../../../src/main/assets/dictionary/HKVariantsRev.txt"),
+    HK_VARIANTS => ("HKVariants", "../../../src/main/assets/dictionary/HKVariants.txt"),
+    JP_SHINJITAI_CHARACTERS => ("JPShinjitaiCharacters", "../../../src/main/assets/dictionary/JPShinjitaiCharacters.txt"),
+    JP_SHINJITAI_PHRASES => ("JPShinjitaiPhrases", "../../../src/main/assets/dictionary/JPShinjitaiPhrases.txt"),
+    JP_VARIANTS_REV => ("JPVariantsRev", "../../../src/main/assets/dictionary/JPVariantsRev.txt"),
+    JP_VARIANTS => ("JPVariants", "../../../src/main/assets/dictionary/JPVariants.txt"),
+    ST_CHARACTERS => ("STCharacters", "../../../src/main/assets/dictionary/STCharacters.txt"),
+    ST_PHRASES => ("STPhrases", "../../../src/main/assets/dictionary/STPhrases.txt"),
+    TS_CHARACTERS => ("TSCharacters", "../../../src/main/assets/dictionary/TSCharacters.txt"),
+    TS_PHRASES => ("TSPhrases", "../../../src/main/assets/dictionary/TSPhrases.txt"),
+    TW_PHRASES_IT => ("TWPhrasesIT", "../../../src/main/assets/dictionary/TWPhrasesIT.txt"),
+    TW_PHRASES_NAME => ("TWPhrasesName", "../../../src/main/assets/dictionary/TWPhrasesName.txt"),
+    TW_PHRASES_OTHER => ("TWPhrasesOther", "../../../src/main/assets/dictionary/TWPhrasesOther.txt"),
+    TW_PHRASES_REV => ("TWPhrasesRev", "../../../src/main/assets/dictionary/TWPhrasesRev.txt"),
+    TW_VARIANTS_REV_PHRASES => ("TWVariantsRevPhrases", "../../../src/main/assets/dictionary/TWVariantsRevPhrases.txt"),
+    TW_VARIANTS_REV => ("TWVariantsRev", "../../../src/main/assets/dictionary/TWVariantsRev.txt"),
+    TW_VARIANTS => ("TWVariants", "../../../src/main/assets/dictionary/TWVariants.txt"),
+}
 static CONVERTERS: Lazy<Mutex<HashMap<i32, Arc<Converter>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -136,18 +146,26 @@ fn build_converter(target: i32) -> Result<Converter, String> {
 
     let mut stages = Vec::with_capacity(stage_names.len());
     for names in stage_names {
-        stages.push(build_stage(&DICTS, names)?);
+        stages.push(build_stage(names)?);
     }
     Ok(Converter { stages })
 }
 
-fn build_stage(dicts: &DictSet, names: &[&str]) -> Result<Stage, String> {
-    let mut merged = Dict::new();
+fn build_stage(names: &[&str]) -> Result<Stage, String> {
+    let mut dicts = Vec::with_capacity(names.len());
     for name in names {
-        let dict = dicts
-            .get(name)
-            .ok_or_else(|| format!("OpenCC dictionary {name} is missing"))?;
-        for (key, value) in dict {
+        dicts.push(
+            dictionary(name)
+                .ok_or_else(|| format!("OpenCC dictionary {name} is missing"))?,
+        );
+    }
+    build_stage_from_dicts(&dicts)
+}
+
+fn build_stage_from_dicts(dicts: &[&Dict]) -> Result<Stage, String> {
+    let mut merged = Dict::new();
+    for dict in dicts {
+        for (key, value) in *dict {
             merged.insert(key.clone(), value.clone());
         }
     }
@@ -199,15 +217,14 @@ mod tests {
 
     #[test]
     fn merge_order_and_longest_match_match_legacy_converter() {
-        let mut dicts = DictSet::new();
-        dicts.insert("first", parse_dictionary("A\tfirst\n"));
-        dicts.insert("second", parse_dictionary("A\tsecond\n"));
-        dicts.insert("longest", parse_dictionary("Q\tshort\nQR\tlong\n"));
+        let first = parse_dictionary("A\tfirst\n");
+        let second = parse_dictionary("A\tsecond\n");
+        let longest = parse_dictionary("Q\tshort\nQR\tlong\n");
 
         let converter = Converter {
             stages: vec![
-                build_stage(&dicts, &["first", "second"]).unwrap(),
-                build_stage(&dicts, &["longest"]).unwrap(),
+                build_stage_from_dicts(&[&first, &second]).unwrap(),
+                build_stage_from_dicts(&[&longest]).unwrap(),
             ],
         };
         assert_eq!(apply_converter(&converter, "A QR"), "second long");
