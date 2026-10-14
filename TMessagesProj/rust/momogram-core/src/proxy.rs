@@ -201,12 +201,14 @@ pub fn is_valid_web_proxy_path(path: &str) -> bool {
 }
 
 pub fn is_valid_web_proxy_secret(secret: &str) -> bool {
-    if secret.len() == 32 {
-        return secret.bytes().all(|b| b.is_ascii_hexdigit());
+    let bytes = secret.as_bytes();
+    if bytes.len() == 32 {
+        return bytes.iter().all(u8::is_ascii_hexdigit);
     }
-    secret.len() == 34
-        && secret[..2].eq_ignore_ascii_case("dd")
-        && secret[2..].bytes().all(|b| b.is_ascii_hexdigit())
+    bytes.len() == 34
+        && bytes[0].eq_ignore_ascii_case(&b'd')
+        && bytes[1].eq_ignore_ascii_case(&b'd')
+        && bytes[2..].iter().all(u8::is_ascii_hexdigit)
 }
 
 pub fn decode_marked_web_proxy_secret(secret: &str) -> Option<String> {
@@ -311,6 +313,13 @@ mod tests {
         assert_eq!(proxy.address, "example.com/path_a");
         assert_eq!(proxy.secret, secret);
         assert_eq!(proxy.port, 0);
+    }
+
+    #[test]
+    fn invalid_utf8_boundary_secret_is_rejected_without_panicking() {
+        let secret = format!("€{}", "a".repeat(31));
+        assert_eq!(secret.len(), 34);
+        assert!(!is_valid_web_proxy_secret(&secret));
     }
 
     #[test]
