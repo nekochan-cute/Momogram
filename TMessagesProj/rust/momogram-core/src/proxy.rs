@@ -1,6 +1,6 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use idna::domain_to_ascii;
+use idna::Config;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -57,7 +57,7 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
 
     let mut address = get("server").or_else(|| get("host")).unwrap_or_default();
     if proxy_type != 2 && check_host_for_punycode(&address) {
-        if let Ok(ascii) = domain_to_ascii(&address) {
+        if let Some(ascii) = java_idn_to_ascii(&address, false) {
             address = ascii;
         }
     }
@@ -89,6 +89,17 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
         password,
         secret,
     })
+}
+
+#[allow(deprecated)]
+fn java_idn_to_ascii(host: &str, std3: bool) -> Option<String> {
+    Config::default()
+        .use_std3_ascii_rules(std3)
+        .transitional_processing(true)
+        .check_hyphens(std3)
+        .verify_dns_length(true)
+        .to_ascii(host)
+        .ok()
 }
 
 fn check_host_for_punycode(value: &str) -> bool {
@@ -127,15 +138,15 @@ pub fn normalize_web_address(address: &str) -> String {
         return address.to_owned();
     }
 
-    match domain_to_ascii(host) {
-        Ok(host) => {
+    match java_idn_to_ascii(host, true) {
+        Some(host) => {
             let host = host.to_ascii_lowercase();
             match path {
                 Some(path) => format!("{host}/{path}"),
                 None => host,
             }
         }
-        Err(_) => address.to_owned(),
+        None => address.to_owned(),
     }
 }
 
@@ -155,7 +166,7 @@ pub fn is_valid_web_address(address: &str) -> bool {
     {
         return false;
     }
-    domain_to_ascii(host)
+    java_idn_to_ascii(host, true)
         .map(|ascii| host == ascii.to_ascii_lowercase())
         .unwrap_or(false)
 }
@@ -387,6 +398,12 @@ mod tests {
         let secret = "0123456789abcdef0123456789abcdef";
         let marked = encode_marked_web_proxy_secret(secret);
         assert_eq!(decode_marked_web_proxy_secret(&marked).as_deref(), Some(secret));
+    }
+
+    #[test]
+    fn web_host_enforces_std3_ascii_rules() {
+        assert_eq!(normalize_web_address("_bad.example/path"), "_bad.example/path");
+        assert!(!is_valid_web_address("_bad.example/path"));
     }
 
     #[test]
