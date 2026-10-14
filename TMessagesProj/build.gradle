@@ -4,6 +4,21 @@ apply plugin: "com.android.application"
 apply plugin: "kotlin-android"
 apply plugin: "org.telegram.build-plugin"
 apply plugin: "org.telegram.build-app-plugin"
+apply plugin: "org.mozilla.rust-android-gradle.rust-android"
+
+cargo {
+    module = "rust/momogram-core"
+    libname = "momogram_core"
+    targets = ["arm", "arm64", "x86", "x86_64"]
+    apiLevel = 21
+    profile = "release"
+}
+
+afterEvaluate {
+    tasks.named("preBuild").configure {
+        dependsOn tasks.named("cargoBuild")
+    }
+}
 
 def verName = APP_VERSION_NAME
 def verCode = 11609
