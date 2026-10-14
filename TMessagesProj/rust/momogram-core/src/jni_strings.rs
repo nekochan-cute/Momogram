@@ -26,10 +26,13 @@ pub extern "system" fn Java_moe_hx030_momogram_utils_RustCore_nativeGetSubString
         Ok(value) => value,
         Err(err) => return throw_and_null_string(&mut env, err),
     };
-    new_string(
-        &mut env,
-        strings::get_sub_string(&text, left.as_deref(), right.as_deref(), last != 0),
-    )
+    match strings::get_sub_string(&text, left.as_deref(), right.as_deref(), last != 0) {
+        Ok(value) => new_string(&mut env, value),
+        Err(err) => {
+            let _ = env.throw_new("java/lang/StringIndexOutOfBoundsException", err);
+            ptr::null_mut()
+        }
+    }
 }
 
 #[no_mangle]

@@ -6,10 +6,19 @@ use uuid::Uuid;
 const RE_KEYS: &[char] = &['$', '(', ')', '*', '+', '.', '[', ']', '?', '\\', '^', '{', '}', '|'];
 const RANDOM_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-pub fn get_sub_string(text: &str, left: Option<&str>, right: Option<&str>, last: bool) -> String {
+pub fn get_sub_string(
+    text: &str,
+    left: Option<&str>,
+    right: Option<&str>,
+    last: bool,
+) -> Result<String, String> {
     let text16: Vec<u16> = text.encode_utf16().collect();
-    let left16 = left.filter(|s| !s.is_empty()).map(|s| s.encode_utf16().collect::<Vec<_>>());
-    let right16 = right.filter(|s| !s.is_empty()).map(|s| s.encode_utf16().collect::<Vec<_>>());
+    let left16 = left
+        .filter(|s| !s.is_empty())
+        .map(|s| s.encode_utf16().collect::<Vec<_>>());
+    let right16 = right
+        .filter(|s| !s.is_empty())
+        .map(|s| s.encode_utf16().collect::<Vec<_>>());
 
     let start = match left16.as_deref() {
         None => 0,
@@ -20,19 +29,14 @@ pub fn get_sub_string(text: &str, left: Option<&str>, right: Option<&str>, last:
 
     let end = match right16.as_deref() {
         None => text16.len(),
-        Some(needle) => {
-            if last {
-                find_subslice(&text16, needle, start, true).unwrap_or(text16.len())
-            } else {
-                find_subslice(&text16, needle, start, false).unwrap_or(text16.len())
-            }
-        }
+        Some(needle) if last => find_subslice(&text16, needle, 0, true).unwrap_or(text16.len()),
+        Some(needle) => find_subslice(&text16, needle, start, false).unwrap_or(text16.len()),
     };
 
-    if start > end || end > text16.len() {
-        return String::new();
+    if start > end {
+        return Err(format!("begin {start}, end {end}, length {}", text16.len()));
     }
-    String::from_utf16_lossy(&text16[start..end])
+    Ok(String::from_utf16_lossy(&text16[start..end]))
 }
 
 fn find_subslice(haystack: &[u16], needle: &[u16], start: usize, last: bool) -> Option<usize> {
@@ -267,7 +271,19 @@ mod tests {
 
     #[test]
     fn substring_uses_jvm_utf16_offsets() {
-        assert_eq!(get_sub_string("😀<hello>😀", Some("<"), Some(">"), false), "hello");
+        assert_eq!(
+            get_sub_string("😀<hello>😀", Some("<"), Some(">"), false).unwrap(),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn substring_last_mode_uses_global_right_delimiter_like_kotlin() {
+        assert!(get_sub_string("x>abc<y", Some("<"), Some(">"), true).is_err());
+        assert_eq!(
+            get_sub_string("x<abc>y", Some("<"), Some(">"), true).unwrap(),
+            "abc"
+        );
     }
 
     #[test]
