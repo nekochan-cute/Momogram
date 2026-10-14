@@ -1,0 +1,269 @@
+use fancy_regex::Regex;
+use unicode_bidi::{bidi_class, BidiClass};
+use uuid::Uuid;
+
+const RE_KEYS: &[char] = &[
+    '$', '(', ')', '*', '+', '.', '[', ']', '?', '\\', '^', '{', '}', '|',
+];
+const RANDOM_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+pub fn get_sub_string(text: &str, left: Option<&str>, right: Option<&str>, last: bool) -> String {
+    let text16: Vec<u16> = text.encode_utf16().collect();
+    let left16 = left
+        .filter(|s| !s.is_empty())
+        .map(|s| s.encode_utf16().collect::<Vec<_>>());
+    let right16 = right
+        .filter(|s| !s.is_empty())
+        .map(|s| s.encode_utf16().collect::<Vec<_>>());
+
+    let start = match left16.as_deref() {
+        None => 0,
+        Some(needle) => find_subslice(&text16, needle, 0, last)
+            .map(|i| i + needle.len())
+            .unwrap_or(0),
+    };
+
+    let end = match right16.as_deref() {
+        None => text16.len(),
+        Some(needle) => {
+            if last {
+                find_subslice(&text16, needle, start, true).unwrap_or(text16.len())
+            } else {
+                find_subslice(&text16, needle, start, false).unwrap_or(text16.len())
+            }
+        }
+    };
+
+    if start > end || end > text16.len() {
+        return String::new();
+    }
+    String::from_utf16_lossy(&text16[start..end])
+}
+
+fn find_subslice(haystack: &[u16], needle: &[u16], start: usize, last: bool) -> Option<usize> {
+    if needle.is_empty() || start > haystack.len() || needle.len() > haystack.len() {
+        return None;
+    }
+    if last {
+        (start..=haystack.len().saturating_sub(needle.len()))
+            .rev()
+            .find(|&i| haystack.get(i..i + needle.len()) == Some(needle))
+    } else {
+        (start..=haystack.len().saturating_sub(needle.len()))
+            .find(|&i| haystack.get(i..i + needle.len()) == Some(needle))
+    }
+}
+
+pub fn is_integer(value: &str) -> bool {
+    value.parse::<i32>().is_ok()
+}
+
+pub fn replace_all_regex(
+    content: &str,
+    pattern: &str,
+    replacement: Option<&str>,
+) -> Result<String, String> {
+    if content.is_empty() {
+        return Ok(String::new());
+    }
+    let Some(template) = replacement else {
+        return Ok(content.to_owned());
+    };
+
+    let wrapped = format!("(?s:{pattern})");
+    let regex = Regex::new(&wrapped).map_err(|e| e.to_string())?;
+    let mut out = String::with_capacity(content.len());
+    let mut last = 0;
+
+    for captures in regex.captures_iter(content) {
+        let captures = captures.map_err(|e| e.to_string())?;
+        let whole = captures
+            .get(0)
+            .ok_or_else(|| "regex match is missing group 0".to_owned())?;
+        out.push_str(&content[last..whole.start()]);
+        out.push_str(&expand_groups(template, &captures)?);
+        last = whole.end();
+    }
+    out.push_str(&content[last..]);
+    Ok(out)
+}
+
+fn expand_groups(template: &str, captures: &fancy_regex::Captures<'_>) -> Result<String, String> {
+    let bytes = template.as_bytes();
+    let mut out = String::with_capacity(template.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            let group: usize = template[start..end]
+                .parse()
+                .map_err(|_| "invalid replacement group".to_owned())?;
+            if group >= captures.len() {
+                return Err(format!("replacement group ${group} is out of range"));
+            }
+            if let Some(value) = captures.get(group) {
+                out.push_str(value.as_str());
+            }
+            i = end;
+        } else {
+            let ch = template[i..]
+                .chars()
+                .next()
+                .ok_or_else(|| "invalid UTF-8 replacement offset".to_owned())?;
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    Ok(out)
+}
+
+pub fn escape(content: &str) -> String {
+    if content.trim().is_empty() {
+        return content.to_owned();
+    }
+    let mut out = String::with_capacity(content.len());
+    for ch in content.chars() {
+        if RE_KEYS.contains(&ch) {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+pub fn simple_uuid() -> String {
+    Uuid::new_v4().simple().to_string()
+}
+
+pub fn is_rtl(value: Option<&str>) -> bool {
+    value.is_some_and(|text| {
+        text.chars()
+            .any(|ch| matches!(bidi_class(ch), BidiClass::R | BidiClass::AL))
+    })
+}
+
+pub fn first_char_upper(value: Option<&str>) -> Option<String> {
+    let value = value?;
+    if value.trim().is_empty() {
+        return Some(value.to_owned());
+    }
+    let mut chars = value.chars();
+    let first = chars.next()?;
+    let upper = first.to_uppercase().next().unwrap_or(first);
+    let mut out = String::with_capacity(value.len());
+    out.push(upper);
+    out.push_str(chars.as_str());
+    Some(out)
+}
+
+pub fn prefix_030(simple_name: &str) -> String {
+    format!("030-{simple_name}")
+}
+
+pub fn select_name(use_old: bool, old: &str, current: &str) -> String {
+    if use_old {
+        old.to_owned()
+    } else {
+        current.to_owned()
+    }
+}
+
+pub fn is_app_name(value: &str, a: &str, b: &str, c: &str) -> bool {
+    value == a || value == b || value == c
+}
+
+pub fn append_csv(original: Option<&str>, addition: &str) -> String {
+    match original {
+        None => addition.to_owned(),
+        Some(value) if value.trim().is_empty() => addition.to_owned(),
+        Some(value) => format!("{value},{addition}"),
+    }
+}
+
+pub fn randomize_file_name(name: &str) -> Result<String, String> {
+    let ext = name.rfind('.').map(|dot| &name[dot..]).unwrap_or("");
+    let mut random = [0u8; 6];
+    getrandom::getrandom(&mut random).map_err(|e| e.to_string())?;
+    let mut out = String::with_capacity(6 + ext.len());
+    for byte in random {
+        out.push(RANDOM_CHARS[(byte as usize) % RANDOM_CHARS.len()] as char);
+    }
+    out.push_str(ext);
+    Ok(out)
+}
+
+pub fn mention_ranges(text: &str) -> Vec<i32> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut result = Vec::new();
+    let mut utf16_pos = 0usize;
+    let mut utf16_positions = Vec::with_capacity(chars.len() + 1);
+    for &(_, ch) in &chars {
+        utf16_positions.push(utf16_pos);
+        utf16_pos += ch.len_utf16();
+    }
+    utf16_positions.push(utf16_pos);
+
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].1 != '@' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut end = i + 1;
+        let mut count = 0;
+        while end < chars.len() && count < 32 {
+            let ch = chars[end].1;
+            if !(ch.is_ascii_alphanumeric() || ch == '_') {
+                break;
+            }
+            end += 1;
+            count += 1;
+        }
+        if count >= 1 {
+            result.push(utf16_positions[start] as i32);
+            result.push(utf16_positions[end] as i32);
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substring_uses_jvm_utf16_offsets() {
+        assert_eq!(
+            get_sub_string("😀<hello>😀", Some("<"), Some(">"), false),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn replacement_expands_numeric_groups() {
+        assert_eq!(
+            replace_all_regex("a12b34", r"(\d+)", Some("[$1]")).unwrap(),
+            "a[12]b[34]"
+        );
+    }
+
+    #[test]
+    fn mentions_report_utf16_ranges() {
+        assert_eq!(mention_ranges("😀 @abc x"), vec![3, 7]);
+    }
+
+    #[test]
+    fn random_name_keeps_extension() {
+        let value = randomize_file_name("photo.jpg").unwrap();
+        assert_eq!(value.len(), 10);
+        assert!(value.ends_with(".jpg"));
+    }
+}
