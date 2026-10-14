@@ -62,6 +62,7 @@ pub(crate) fn decode_binary(payload: &[u8], version: i32) -> Result<Value, Strin
             object.insert("seq_out".to_owned(), json!(row.i32()?));
             object.insert("random_id".to_owned(), json!(row.i64()?));
             if version >= 2 && row.i32()? == 1 {
+                object.insert("med_present".to_owned(), json!(true));
                 put_blob(&mut object, "med_data", row.blob()?);
                 object.insert("med_type".to_owned(), json!(row.i32()?));
                 object.insert("med_date".to_owned(), json!(row.i32()?));

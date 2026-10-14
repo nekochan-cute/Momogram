@@ -62,15 +62,13 @@ pub(crate) fn encode_binary(root: &Value) -> Result<Vec<u8>, String> {
             row.i32(i32v(message, "seq_in"));
             row.i32(i32v(message, "seq_out"));
             row.i64(i64v(message, "random_id"));
-            if let Some(media_data) = blobv(message, "med_data")? {
-                if !media_data.is_empty() {
-                    row.i32(1);
-                    row.blob(Some(&media_data))?;
-                    row.i32(i32v(message, "med_type"));
-                    row.i32(i32v(message, "med_date"));
-                } else {
-                    row.i32(0);
-                }
+            let media_data = blobv(message, "med_data")?;
+            let media_present = boolv(message, "med_present") || media_data.is_some();
+            if media_present {
+                row.i32(1);
+                row.blob(media_data.as_deref())?;
+                row.i32(i32v(message, "med_type"));
+                row.i32(i32v(message, "med_date"));
             } else {
                 row.i32(0);
             }
@@ -159,6 +157,10 @@ fn i32v(value: &Value, key: &str) -> i32 {
 
 fn i64v(value: &Value, key: &str) -> i64 {
     value.get(key).and_then(Value::as_i64).unwrap_or(0)
+}
+
+fn boolv(value: &Value, key: &str) -> bool {
+    value.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn strv<'a>(value: &'a Value, key: &str) -> &'a str {

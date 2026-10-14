@@ -267,8 +267,10 @@ public class SecretChatBackupManager {
                     message.put("seq_in", cursor.intValue(19));
                     message.put("seq_out", cursor.intValue(20));
                     message.put("random_id", cursor.longValue(21));
-                    putBase64(message, "med_data", getBufferBytes(cursor.byteBufferValue(22)));
-                    if (!message.isNull("med_data")) {
+                    byte[] mediaData = getBufferBytes(cursor.byteBufferValue(22));
+                    if (mediaData != null) {
+                        message.put("med_present", true);
+                        putBase64(message, "med_data", mediaData);
                         message.put("med_type", cursor.intValue(23));
                         message.put("med_date", cursor.intValue(24));
                     }
@@ -485,7 +487,8 @@ public class SecretChatBackupManager {
                     int mid = message.getInt("mid");
 
                     byte[] mediaData = fromBase64(message, "med_data");
-                    if (mediaData != null) {
+                    boolean mediaPresent = message.optBoolean("med_present", mediaData != null);
+                    if (mediaPresent) {
                         stateMed.requery();
                         stateMed.bindInteger(1, mid);
                         stateMed.bindLong(2, dialogId);
