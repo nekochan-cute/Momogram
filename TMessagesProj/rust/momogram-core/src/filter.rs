@@ -104,7 +104,7 @@ pub fn matches(pattern: &str, flags: i32, text: &str, use_opencc: bool) -> Resul
         return Ok(false);
     }
 
-    for target in [2, 0] {
+    for target in [2, 0] { // TC, SC
         let converted = opencc::convert(target, text)?;
         if regex.is_match(&converted).map_err(|e| e.to_string())? {
             return Ok(true);
@@ -157,10 +157,7 @@ mod tests {
 
     #[test]
     fn pending_state_is_owned_by_rust() {
-        assert_eq!(
-            decide(42, false, false, false, false, false, false),
-            RESULT_PENDING
-        );
+        assert_eq!(decide(42, false, false, false, false, false, false), RESULT_PENDING);
         assert!(!pending_is_empty());
         assert_eq!(take_pending_ids(), vec![42]);
         assert!(pending_is_empty());

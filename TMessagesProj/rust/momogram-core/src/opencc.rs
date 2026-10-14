@@ -76,12 +76,7 @@ fn get_converter(target: i32) -> Result<Arc<Converter>, String> {
     let converters = CONVERTERS
         .get()
         .ok_or_else(|| "OpenCC dictionaries are not initialized".to_owned())?;
-    if let Some(existing) = converters
-        .lock()
-        .map_err(|_| "OpenCC converter lock poisoned")?
-        .get(&target)
-        .cloned()
-    {
+    if let Some(existing) = converters.lock().map_err(|_| "OpenCC converter lock poisoned")?.get(&target).cloned() {
         return Ok(existing);
     }
 
@@ -95,10 +90,12 @@ fn get_converter(target: i32) -> Result<Arc<Converter>, String> {
 
 fn build_converter(target: i32) -> Result<Converter, String> {
     let stage_names: &[&[&str]] = match target {
+        // CCTarget.SC
         0 => &[
             &["JPShinjitaiCharacters", "JPVariantsRev"],
             &["TSCharacters"],
         ],
+        // CCTarget.SP
         1 => &[
             &[
                 "JPShinjitaiCharacters",
@@ -112,12 +109,14 @@ fn build_converter(target: i32) -> Result<Converter, String> {
             ],
             &["TSCharacters", "TSPhrases"],
         ],
+        // CCTarget.TC
         2 => &[&[
             "JPShinjitaiCharacters",
             "JPVariantsRev",
             "STCharacters",
             "STPhrases",
         ]],
+        // CCTarget.TT
         3 => &[
             &[
                 "JPShinjitaiCharacters",
@@ -128,6 +127,7 @@ fn build_converter(target: i32) -> Result<Converter, String> {
             ],
             &["TWVariants", "TWPhrasesIT", "TWPhrasesName", "TWPhrasesOther"],
         ],
+        // CCTarget.HK
         4 => &[
             &[
                 "JPShinjitaiCharacters",
@@ -138,6 +138,7 @@ fn build_converter(target: i32) -> Result<Converter, String> {
             ],
             &["HKVariants"],
         ],
+        // CCTarget.JP
         5 => &[
             &["STCharacters", "STPhrases"],
             &["JPVariants", "JPShinjitaiCharacters", "JPShinjitaiPhrases"],
@@ -224,7 +225,7 @@ mod tests {
         let dicts = [
             ("JPShinjitaiCharacters", "台\t臺\n"),
             ("JPVariantsRev", ""),
-            ("TSCharacters", "臺\t台\n灣\t湾\n"),
+            ("TSCharacters", "臺\t台\n"),
         ];
         let mut bundle = Vec::new();
         bundle.extend_from_slice(&(dicts.len() as u32).to_be_bytes());
