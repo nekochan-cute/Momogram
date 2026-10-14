@@ -98,6 +98,8 @@ fn expand_groups(template: &str, captures: &fancy_regex::Captures<'_>) -> Result
             }
             if let Some(value) = captures.get(group) {
                 out.push_str(value.as_str());
+            } else {
+                out.push_str(&template[i..end]);
             }
             i = end;
         } else {
@@ -234,6 +236,14 @@ mod tests {
     #[test]
     fn replacement_expands_numeric_groups() {
         assert_eq!(replace_all_regex("a12b34", r"(\d+)", Some("[$1]")).unwrap(), "a[12]b[34]");
+    }
+
+    #[test]
+    fn unmatched_optional_group_stays_literal_like_kotlin() {
+        assert_eq!(
+            replace_all_regex("b", r"(a)?b", Some("[$1]")).unwrap(),
+            "[$1]"
+        );
     }
 
     #[test]
