@@ -88,3 +88,22 @@ jobs:
         run: ./gradlew :TMessagesProj:cargoBuild --stacktrace
       - name: Assemble Android release
         run: ./gradlew :TMessagesProj:assembleRelease --stacktrace
+      - name: Verify Rust library packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find TMessagesProj/build/outputs/apk -type f -name '*.apk' | sort)
+          test "${#apks[@]}" -gt 0
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            found=0
+            for apk in "${apks[@]}"; do
+              if unzip -Z1 "$apk" | grep -qx "lib/$abi/libmomogram_core.so"; then
+                found=1
+                break
+              fi
+            done
+            if [ "$found" -ne 1 ]; then
+              echo "libmomogram_core.so missing for ABI: $abi" >&2
+              exit 1
+            fi
+          done
