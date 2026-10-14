@@ -28,7 +28,7 @@ pub fn is_twitter_preview(host: &str) -> bool {
 }
 
 pub fn strip_all_queries(src: &str) -> String {
-    src.split_once('?').map(|(head, _)| head.to_owned()).unwrap_or_else(|| src.to_owned())
+    src.rsplit_once('?').map(|(head, _)| head.to_owned()).unwrap_or_else(|| src.to_owned())
 }
 
 pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> String {
@@ -213,6 +213,12 @@ mod tests {
     #[test]
     fn keeps_non_http_urls_unchanged() {
         assert_eq!(clean_url("tg://resolve?domain=test", true, &[]), "tg://resolve?domain=test");
+    }
+
+    #[test]
+    fn strip_all_queries_matches_legacy_last_question_mark_behavior() {
+        assert_eq!(super::strip_all_queries("https://example.com/a?x=?y"), "https://example.com/a?x=");
+        assert_eq!(super::strip_all_queries("https://example.com/a"), "https://example.com/a");
     }
 
     #[test]
