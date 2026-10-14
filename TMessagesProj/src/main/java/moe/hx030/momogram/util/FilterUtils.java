@@ -66,10 +66,8 @@ public class FilterUtils {
         boolean contact = contactsController.isContact(senderId);
 
         if (MomoConfig.debugAntiSpam.Bool()) {
-            Log.d("030-debugspam", String.format(
-                    "PM?, id=%d, chat=%d, isSvc=%s, isContact=%s",
-                    senderId, chatId, service, contact
-            ));
+            Log.d("030-debugspam", String.format("PM?, id=%d, chat=%d, isSvc=%s, isContact=%s",
+                    senderId, chatId, service, contact));
         }
 
         TLRPC.User currentUser = messagesStorage.getUserSync(chatId);
@@ -89,11 +87,7 @@ public class FilterUtils {
                         }
                     }
                 } catch (Exception ex) {
-                    Log.e(
-                            "030-filter",
-                            String.format("failed to get %d from current update data, skipping", senderId),
-                            ex
-                    );
+                    Log.e("030-filter", String.format("failed to get %d from current update data, skipping", senderId), ex);
                 }
             }
         }
@@ -110,10 +104,7 @@ public class FilterUtils {
 
         if (decision == NATIVE_PENDING) {
             if (service || contact) {
-                Log.e(
-                        "030-filter",
-                        String.format("cannot fetch currentUser for %d %d, skipping...", senderId, chatId)
-                );
+                Log.e("030-filter", String.format("cannot fetch currentUser for %d %d, skipping...", senderId, chatId));
             }
             return Result.Pending;
         }
@@ -149,19 +140,10 @@ public class FilterUtils {
         });
     }
 
-    public static void archiveAndMute(
-            MessagesController messagesController,
-            NotificationsController notificationsController,
-            ArrayList<Long> list,
-            long id
-    ) {
+    public static void archiveAndMute(MessagesController messagesController, NotificationsController notificationsController, ArrayList<Long> list, long id) {
         AndroidUtilities.runOnUIThread(() -> {
             messagesController.addDialogToFolder(list, 1, -1, null, 0);
-            notificationsController.setDialogNotificationsSettings(
-                    id,
-                    0,
-                    NotificationsController.SETTING_MUTE_FOREVER
-            );
+            notificationsController.setDialogNotificationsSettings(id, 0, NotificationsController.SETTING_MUTE_FOREVER);
         });
     }
 
@@ -179,7 +161,7 @@ public class FilterUtils {
     private static boolean matches(Pattern regex, String text, boolean useOpenCC) {
         int result = RustCore.filterMatches(regex.pattern(), regex.flags(), text, useOpenCC);
         if (result >= 0) return result == 1;
-
+        // Compatibility fallback only for Java-regex constructs unsupported by the Rust engine.
         if (regex.matcher(text).find()) return true;
         if (useOpenCC) {
             for (CCTarget target : new CCTarget[]{CCTarget.TC, CCTarget.SC}) {

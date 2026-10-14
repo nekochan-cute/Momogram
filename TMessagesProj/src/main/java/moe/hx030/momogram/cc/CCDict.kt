@@ -14,7 +14,7 @@ enum class CCDict {
     TSPhrases,
     TWPhrasesIT,
     TWPhrasesName,
-    T]PhrasesOther,
+    TWPhrasesOther,
     TWPhrasesRev,
     TWVariantsRevPhrases,
     TWVariantsRev,
