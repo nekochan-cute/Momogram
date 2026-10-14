@@ -175,12 +175,23 @@ pub fn append_csv(original: Option<&str>, addition: &str) -> String {
 
 pub fn randomize_file_name(name: &str) -> Result<String, String> {
     let ext = name.rfind('.').map(|dot| &name[dot..]).unwrap_or("");
-    let mut random = [0u8; 6];
-    getrandom::getrandom(&mut random).map_err(|e| e.to_string())?;
     let mut out = String::with_capacity(6 + ext.len());
-    for byte in random {
-        out.push(RANDOM_CHARS[(byte as usize) % RANDOM_CHARS.len()] as char);
+    let acceptance_limit = (u8::MAX as usize + 1) / RANDOM_CHARS.len() * RANDOM_CHARS.len();
+
+    while out.len() < 6 {
+        let mut random = [0u8; 8];
+        getrandom::getrandom(&mut random).map_err(|e| e.to_string())?;
+        for byte in random {
+            if (byte as usize) >= acceptance_limit {
+                continue;
+            }
+            out.push(RANDOM_CHARS[(byte as usize) % RANDOM_CHARS.len()] as char);
+            if out.len() == 6 {
+                break;
+            }
+        }
     }
+
     out.push_str(ext);
     Ok(out)
 }
