@@ -58,16 +58,21 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
         return out;
     }
 
+    let append_port = parsed.port.is_some_and(|port| {
+        !((parsed.scheme == "http" && port == 80) || (parsed.scheme == "https" && port == 443))
+    });
+
     let mut out = String::new();
     out.push_str(parsed.scheme);
     out.push_str("://");
-    out.push_str(&decoded_host);
-    if let Some(port) = parsed.port {
-        let is_default = (parsed.scheme == "http" && port == 80) || (parsed.scheme == "https" && port == 443);
-        if !is_default {
-            out.push(':');
-            out.push_str(&port.to_string());
-        }
+    if append_port {
+        // Legacy code uses encodedAuthority when retaining a non-default port.
+        out.push_str(&decoded_host);
+        out.push(':');
+        out.push_str(&parsed.port.unwrap().to_string());
+    } else {
+        // Legacy code uses authority(host), which runs Uri.encode(host).
+        out.push_str(&uri_encode_component(&decoded_host));
     }
     out.push_str(&legacy_general_builder_path(parsed.path));
 
@@ -380,6 +385,26 @@ mod tests {
         assert_eq!(
             clean_url("https://twitter.com/a%2Fb+c", true, &[]),
             "https://twitter.com/a/b%2Bc"
+        );
+    }
+
+    #[test]
+    fn general_authority_matches_android_builder_encoding() {
+        assert_eq!(
+            clean_url("https://%E4%BE%8B.com/a", true, &[]),
+            "https://%E4%BE%8B.com/a"
+        );
+        assert_eq!(
+            clean_url("https://host:abc/a", true, &[]),
+            "https://host%3Aabc/a"
+        );
+        assert_eq!(
+            clean_url("https://[::1]/a", true, &[]),
+            "https://%5B%3A%3A1%5D/a"
+        );
+        assert_eq!(
+            clean_url("https://[::1]:8443/a", true, &[]),
+            "https://[::1]:8443/a"
         );
     }
 
