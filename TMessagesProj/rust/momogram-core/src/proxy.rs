@@ -245,15 +245,50 @@ pub fn is_valid_web_proxy_path(path: &str) -> bool {
     path.len() <= 128 && path_regex().is_match(path)
 }
 
-pub fn is_valid_web_proxy_secret(secret: &str) -> bool {
-    let bytes = secret.as_bytes();
-    if bytes.len() == 32 {
-        return bytes.iter().all(u8::is_ascii_hexdigit);
+const JAVA_DECIMAL_DIGIT_ZEROES: &[u32] = &[
+    0x0030, 0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6,
+    0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66, 0x0DE6, 0x0E50, 0x0ED0,
+    0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80,
+    0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0x2080, 0xA620, 0xA8D0,
+    0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0, 0xFF10,
+];
+
+fn java_char_hex_digit(ch: char) -> Option<u8> {
+    let code = ch as u32;
+    // Legacy Java calls Character.digit(char, 16), so supplementary code
+    // points are observed as surrogate halves and are not valid digits.
+    if code > u16::MAX as u32 {
+        return None;
     }
-    bytes.len() == 34
-        && bytes[0].eq_ignore_ascii_case(&b'd')
-        && bytes[1].eq_ignore_ascii_case(&b'd')
-        && bytes[2..].iter().all(u8::is_ascii_hexdigit)
+
+    for &zero in JAVA_DECIMAL_DIGIT_ZEROES {
+        if (zero..=zero + 9).contains(&code) {
+            return Some((code - zero) as u8);
+        }
+    }
+
+    match code {
+        0x0041..=0x0046 => Some((code - 0x0041 + 10) as u8),
+        0x0061..=0x0066 => Some((code - 0x0061 + 10) as u8),
+        0xFF21..=0xFF26 => Some((code - 0xFF21 + 10) as u8),
+        0xFF41..=0xFF46 => Some((code - 0xFF41 + 10) as u8),
+        _ => None,
+    }
+}
+
+pub fn is_valid_web_proxy_secret(secret: &str) -> bool {
+    let utf16_len = secret.encode_utf16().count();
+    if utf16_len == 32 {
+        return secret.chars().all(|ch| java_char_hex_digit(ch).is_some());
+    }
+    if utf16_len != 34 {
+        return false;
+    }
+
+    let mut chars = secret.chars();
+    matches!(chars.next(), Some('d' | 'D'))
+        && matches!(chars.next(), Some('d' | 'D'))
+        && chars.all(|ch| java_char_hex_digit(ch).is_some())
 }
 
 pub fn decode_marked_web_proxy_secret(secret: &str) -> Option<String> {
@@ -285,26 +320,23 @@ pub fn encode_marked_web_proxy_secret(secret: &str) -> String {
 }
 
 fn hex_to_bytes(value: &str) -> Option<Vec<u8>> {
-    if value.len() % 2 != 0 {
+    let utf16_len = value.encode_utf16().count();
+    if utf16_len % 2 != 0 {
         return None;
     }
-    let mut out = Vec::with_capacity(value.len() / 2);
-    let bytes = value.as_bytes();
-    for i in (0..bytes.len()).step_by(2) {
-        let hi = hex(bytes[i])?;
-        let lo = hex(bytes[i + 1])?;
+
+    let mut chars = value.chars();
+    let mut out = Vec::with_capacity(utf16_len / 2);
+    loop {
+        let Some(hi_char) = chars.next() else {
+            break;
+        };
+        let lo_char = chars.next()?;
+        let hi = java_char_hex_digit(hi_char)?;
+        let lo = java_char_hex_digit(lo_char)?;
         out.push((hi << 4) | lo);
     }
     Some(out)
-}
-
-fn hex(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
 }
 
 fn bytes_to_hex(value: &[u8]) -> String {
@@ -404,6 +436,26 @@ mod tests {
         assert_eq!(proxy.address, "example.com/path_a");
         assert_eq!(proxy.secret, secret);
         assert_eq!(proxy.port, 0);
+    }
+
+    #[test]
+    fn web_secret_matches_java_character_digit_semantics() {
+        let fullwidth_zero = "０".repeat(32);
+        assert!(is_valid_web_proxy_secret(&fullwidth_zero));
+        let marked = encode_marked_web_proxy_secret(&fullwidth_zero);
+        assert_eq!(
+            decode_marked_web_proxy_secret(&marked).as_deref(),
+            Some("00000000000000000000000000000000")
+        );
+
+        let arabic_one = "١".repeat(32);
+        assert!(is_valid_web_proxy_secret(&arabic_one));
+        let fullwidth_a = "Ａ".repeat(32);
+        assert!(is_valid_web_proxy_secret(&fullwidth_a));
+
+        let supplementary = "𝟘".repeat(16);
+        assert_eq!(supplementary.encode_utf16().count(), 32);
+        assert!(!is_valid_web_proxy_secret(&supplementary));
     }
 
     #[test]
