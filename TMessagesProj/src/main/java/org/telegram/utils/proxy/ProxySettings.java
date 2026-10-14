@@ -10,6 +10,7 @@ import org.json.JSONObject;
 
 import moe.hx030.momogram.utils.RustCore;
 
+
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.util.Locale;
@@ -314,6 +315,8 @@ public final class ProxySettings {
         return RustCore.proxyIsValidWebSecret(secret);
     }
 
+
+
     private static String decodeMarkedWebProxySecret(String secret) {
         return RustCore.proxyDecodeMarkedSecret(secret);
     }
@@ -322,6 +325,10 @@ public final class ProxySettings {
         String encoded = RustCore.proxyEncodeMarkedSecret(secret);
         return encoded != null ? encoded : secret;
     }
+
+
+
+
 
     public static int typeToInt(Type type) {
         switch (type) {
