@@ -250,6 +250,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_tg_proxy_link() {
+        let proxy = parse_proxy_uri("tg://proxy?server=example.com&port=443&secret=abcdef").unwrap();
+        assert_eq!(proxy.proxy_type, 1);
+        assert_eq!(proxy.address, "example.com");
+        assert_eq!(proxy.port, 443);
+        assert_eq!(proxy.secret, "abcdef");
+    }
+
+    #[test]
+    fn parses_web_proxy_path_with_marked_secret() {
+        let secret = "0123456789abcdef0123456789abcdef";
+        let marked = encode_marked_web_proxy_secret(secret);
+        let raw = format!("https://t.me/webproxy?server=EXAMPLE.COM/path_a&secret={marked}");
+        let proxy = parse_proxy_uri(&raw).unwrap();
+        assert_eq!(proxy.proxy_type, 2);
+        assert_eq!(proxy.address, "example.com/path_a");
+        assert_eq!(proxy.secret, secret);
+        assert_eq!(proxy.port, 0);
+    }
+
+    #[test]
     fn marked_web_secret_roundtrips() {
         let secret = "0123456789abcdef0123456789abcdef";
         let marked = encode_marked_web_proxy_secret(secret);
