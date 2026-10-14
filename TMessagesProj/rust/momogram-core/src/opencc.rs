@@ -21,6 +21,13 @@ macro_rules! embedded_dicts {
                 Lazy::new(|| parse_dictionary(include_str!($path)));
         )+
 
+        #[cfg(test)]
+        const DICT_SOURCES: &[(&str, &str)] = &[
+            $(
+                ($name, include_str!($path)),
+            )+
+        ];
+
         fn dictionary(name: &str) -> Option<&'static Dict> {
             match name {
                 $(
