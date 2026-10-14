@@ -3,14 +3,14 @@ package moe.hx030.momogram.utils
 import android.text.SpannableStringBuilder
 import android.view.View
 import android.widget.TextView
-import moe.hx030.momogram.MomoConfig
-import moe.hx030.momogram.config.ConfigItem
 import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.FileLog
 import org.telegram.messenger.LocaleController
 import org.telegram.messenger.R
 import org.telegram.ui.ActionBar.BaseFragment
 import org.telegram.ui.Components.URLSpanNoUnderline
+import moe.hx030.momogram.MomoConfig
+import moe.hx030.momogram.config.ConfigItem
 
 object StrUtil {
 
@@ -46,12 +46,8 @@ object StrUtil {
 
     @JvmStatic
     @JvmOverloads
-    fun getSubString(
-        text: String,
-        left: String?,
-        right: String?,
-        lastOrFirst: Boolean = false
-    ): String = RustCore.getSubString(text, left, right, lastOrFirst)
+    fun getSubString(text: String, left: String?, right: String?, lastOrFirst: Boolean = false): String =
+        RustCore.getSubString(text, left, right, lastOrFirst)
 
     @JvmStatic
     fun isInteger(str: String): Boolean = RustCore.isInteger(str)
@@ -84,16 +80,13 @@ object StrUtil {
     )
 
     @JvmStatic
-    fun getAppName(): String =
-        RustCore.selectName(MomoConfig.useOldName.Bool(), appNames[0], appNames[2])
+    fun getAppName(): String = RustCore.selectName(MomoConfig.useOldName.Bool(), appNames[0], appNames[2])
 
     @JvmStatic
-    fun getShortAppName(): String =
-        RustCore.selectName(MomoConfig.useOldName.Bool(), appNames[1], appNames[2])
+    fun getShortAppName(): String = RustCore.selectName(MomoConfig.useOldName.Bool(), appNames[1], appNames[2])
 
     @JvmStatic
-    fun isAppName(s: String): Boolean =
-        RustCore.isAppName(s, appNames[0], appNames[1], appNames[2])
+    fun isAppName(s: String): Boolean = RustCore.isAppName(s, appNames[0], appNames[1], appNames[2])
 
     @JvmStatic
     fun appendToCSConfigString(cfg: ConfigItem, s: Collection<String>) {

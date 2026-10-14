@@ -51,12 +51,10 @@ object RustCore {
     fun prefix030(simpleName: String): String = nativePrefix030(simpleName)
 
     @JvmStatic
-    fun selectName(useOld: Boolean, old: String, current: String): String =
-        nativeSelectName(useOld, old, current)
+    fun selectName(useOld: Boolean, old: String, current: String): String = nativeSelectName(useOld, old, current)
 
     @JvmStatic
-    fun isAppName(value: String, a: String, b: String, c: String): Boolean =
-        nativeIsAppName(value, a, b, c)
+    fun isAppName(value: String, a: String, b: String, c: String): Boolean = nativeIsAppName(value, a, b, c)
 
     @JvmStatic
     fun appendCsv(original: String?, addition: String): String = nativeAppendCsv(original, addition)

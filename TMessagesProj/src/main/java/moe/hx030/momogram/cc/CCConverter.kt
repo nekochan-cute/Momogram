@@ -42,9 +42,7 @@ class CCConverter private constructor(val target: CCTarget) {
                         out.write(content)
                     }
                 }
-                check(RustCore.initOpenCc(buffer.toByteArray())) {
-                    "Rust OpenCC initialization failed"
-                }
+                check(RustCore.initOpenCc(buffer.toByteArray())) { "Rust OpenCC initialization failed" }
                 initialized.set(true)
             }
         }
