@@ -1,9 +1,10 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
-use once_cell::sync::OnceCell;
+use once_cell::sync::Lazy;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 type Dict = BTreeMap<String, String>;
+type DictSet = HashMap<&'static str, Dict>;
 
 struct Stage {
     automaton: AhoCorasick,
@@ -14,49 +15,42 @@ struct Converter {
     stages: Vec<Stage>,
 }
 
-static DICTS: OnceCell<HashMap<String, Dict>> = OnceCell::new();
-static CONVERTERS: OnceCell<Mutex<HashMap<i32, Arc<Converter>>>> = OnceCell::new();
+const DICT_SOURCES: &[(&str, &str)] = &[
+    ("HKVariantsRevPhrases", include_str!("../../../src/main/assets/dictionary/HKVariantsRevPhrases.txt")),
+    ("HKVariantsRev", include_str!("../../../src/main/assets/dictionary/HKVariantsRev.txt")),
+    ("HKVariants", include_str!("../../../src/main/assets/dictionary/HKVariants.txt")),
+    ("JPShinjitaiCharacters", include_str!("../../../src/main/assets/dictionary/JPShinjitaiCharacters.txt")),
+    ("JPShinjitaiPhrases", include_str!("../../../src/main/assets/dictionary/JPShinjitaiPhrases.txt")),
+    ("JPVariantsRev", include_str!("../../../src/main/assets/dictionary/JPVariantsRev.txt")),
+    ("JPVariants", include_str!("../../../src/main/assets/dictionary/JPVariants.txt")),
+    ("STCharacters", include_str!("../../../src/main/assets/dictionary/STCharacters.txt")),
+    ("STPhrases", include_str!("../../../src/main/assets/dictionary/STPhrases.txt")),
+    ("TSCharacters", include_str!("../../../src/main/assets/dictionary/TSCharacters.txt")),
+    ("TSPhrases", include_str!("../../../src/main/assets/dictionary/TSPhrases.txt")),
+    ("TWPhrasesIT", include_str!("../../../src/main/assets/dictionary/TWPhrasesIT.txt")),
+    ("TWPhrasesName", include_str!("../../../src/main/assets/dictionary/TWPhrasesName.txt")),
+    ("TWPhrasesOther", include_str!("../../../src/main/assets/dictionary/TWPhrasesOther.txt")),
+    ("TWPhrasesRev", include_str!("../../../src/main/assets/dictionary/TWPhrasesRev.txt")),
+    ("TWVariantsRevPhrases", include_str!("../../../src/main/assets/dictionary/TWVariantsRevPhrases.txt")),
+    ("TWVariantsRev", include_str!("../../../src/main/assets/dictionary/TWVariantsRev.txt")),
+    ("TWVariants", include_str!("../../../src/main/assets/dictionary/TWVariants.txt")),
+];
 
-pub fn init(bundle: &[u8]) -> Result<(), String> {
-    if DICTS.get().is_some() {
-        return Ok(());
-    }
-
-    let mut cursor = Cursor::new(bundle);
-    let count = cursor.read_u32_be()? as usize;
-    let mut dicts = HashMap::with_capacity(count);
-
-    for _ in 0..count {
-        let name_len = cursor.read_u32_be()? as usize;
-        let name = cursor.read_utf8(name_len)?;
-        let data_len = cursor.read_u32_be()? as usize;
-        let data = cursor.read_utf8(data_len)?;
-        let mut map = Dict::new();
-        for line in data.lines() {
-            let Some((key, values)) = line.split_once('\t') else {
-                continue;
-            };
-            let Some(value) = values.split(' ').next() else {
-                continue;
-            };
-            if !key.is_empty() {
-                map.insert(key.to_owned(), value.to_owned());
-            }
-        }
-        dicts.insert(name, map);
-    }
-
-    if cursor.remaining() != 0 {
-        return Err("OpenCC dictionary bundle has trailing bytes".to_owned());
-    }
-
-    let _ = DICTS.set(dicts);
-    let _ = CONVERTERS.set(Mutex::new(HashMap::new()));
-    Ok(())
-}
+static DICTS: Lazy<DictSet> = Lazy::new(|| {
+    DICT_SOURCES
+        .iter()
+        .map(|(name, data)| (*name, parse_dictionary(data)))
+        .collect()
+});
+static CONVERTERS: Lazy<Mutex<HashMap<i32, Arc<Converter>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub fn convert(target: i32, input: &str) -> Result<String, String> {
     let converter = get_converter(target)?;
+    Ok(apply_converter(&converter, input))
+}
+
+fn apply_converter(converter: &Converter, input: &str) -> String {
     let mut result = input.to_owned();
     for stage in &converter.stages {
         let mut out = String::with_capacity(result.len());
@@ -69,33 +63,31 @@ pub fn convert(target: i32, input: &str) -> Result<String, String> {
         out.push_str(&result[last..]);
         result = out;
     }
-    Ok(result)
+    result
+}
+
+fn converter_lock() -> MutexGuard<'static, HashMap<i32, Arc<Converter>>> {
+    CONVERTERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn get_converter(target: i32) -> Result<Arc<Converter>, String> {
-    let converters = CONVERTERS
-        .get()
-        .ok_or_else(|| "OpenCC dictionaries are not initialized".to_owned())?;
-    if let Some(existing) = converters.lock().map_err(|_| "OpenCC converter lock poisoned")?.get(&target).cloned() {
+    if let Some(existing) = converter_lock().get(&target).cloned() {
         return Ok(existing);
     }
 
     let converter = Arc::new(build_converter(target)?);
-    converters
-        .lock()
-        .map_err(|_| "OpenCC converter lock poisoned")?
-        .insert(target, converter.clone());
+    converter_lock().insert(target, converter.clone());
     Ok(converter)
 }
 
 fn build_converter(target: i32) -> Result<Converter, String> {
     let stage_names: &[&[&str]] = match target {
-        // CCTarget.SC
         0 => &[
             &["JPShinjitaiCharacters", "JPVariantsRev"],
             &["TSCharacters"],
         ],
-        // CCTarget.SP
         1 => &[
             &[
                 "JPShinjitaiCharacters",
@@ -109,14 +101,12 @@ fn build_converter(target: i32) -> Result<Converter, String> {
             ],
             &["TSCharacters", "TSPhrases"],
         ],
-        // CCTarget.TC
         2 => &[&[
             "JPShinjitaiCharacters",
             "JPVariantsRev",
             "STCharacters",
             "STPhrases",
         ]],
-        // CCTarget.TT
         3 => &[
             &[
                 "JPShinjitaiCharacters",
@@ -127,7 +117,6 @@ fn build_converter(target: i32) -> Result<Converter, String> {
             ],
             &["TWVariants", "TWPhrasesIT", "TWPhrasesName", "TWPhrasesOther"],
         ],
-        // CCTarget.HK
         4 => &[
             &[
                 "JPShinjitaiCharacters",
@@ -138,7 +127,6 @@ fn build_converter(target: i32) -> Result<Converter, String> {
             ],
             &["HKVariants"],
         ],
-        // CCTarget.JP
         5 => &[
             &["STCharacters", "STPhrases"],
             &["JPVariants", "JPShinjitaiCharacters", "JPShinjitaiPhrases"],
@@ -146,74 +134,50 @@ fn build_converter(target: i32) -> Result<Converter, String> {
         _ => return Err(format!("Unknown OpenCC target {target}")),
     };
 
-    let dicts = DICTS
-        .get()
-        .ok_or_else(|| "OpenCC dictionaries are not initialized".to_owned())?;
     let mut stages = Vec::with_capacity(stage_names.len());
-
     for names in stage_names {
-        let mut merged = Dict::new();
-        for name in *names {
-            let dict = dicts
-                .get(*name)
-                .ok_or_else(|| format!("OpenCC dictionary {name} is missing"))?;
-            for (key, value) in dict {
-                merged.insert(key.clone(), value.clone());
-            }
-        }
-        let patterns: Vec<String> = merged.keys().cloned().collect();
-        let replacements: Vec<String> = merged.values().cloned().collect();
-        let automaton = AhoCorasickBuilder::new()
-            .match_kind(MatchKind::LeftmostLongest)
-            .build(&patterns)
-            .map_err(|e| format!("OpenCC automaton build failed: {e}"))?;
-        stages.push(Stage {
-            automaton,
-            replacements,
-        });
+        stages.push(build_stage(&DICTS, names)?);
     }
-
     Ok(Converter { stages })
 }
 
-struct Cursor<'a> {
-    data: &'a [u8],
-    pos: usize,
+fn build_stage(dicts: &DictSet, names: &[&str]) -> Result<Stage, String> {
+    let mut merged = Dict::new();
+    for name in names {
+        let dict = dicts
+            .get(name)
+            .ok_or_else(|| format!("OpenCC dictionary {name} is missing"))?;
+        for (key, value) in dict {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+
+    let patterns: Vec<String> = merged.keys().cloned().collect();
+    let replacements: Vec<String> = merged.values().cloned().collect();
+    let automaton = AhoCorasickBuilder::new()
+        .match_kind(MatchKind::LeftmostLongest)
+        .build(&patterns)
+        .map_err(|e| format!("OpenCC automaton build failed: {e}"))?;
+    Ok(Stage {
+        automaton,
+        replacements,
+    })
 }
 
-impl<'a> Cursor<'a> {
-    fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
-    }
-
-    fn read_u32_be(&mut self) -> Result<u32, String> {
-        let bytes = self.read_exact(4)?;
-        Ok(u32::from_be_bytes(bytes.try_into().unwrap()))
-    }
-
-    fn read_utf8(&mut self, len: usize) -> Result<String, String> {
-        let bytes = self.read_exact(len)?;
-        std::str::from_utf8(bytes)
-            .map(|s| s.to_owned())
-            .map_err(|e| format!("Invalid UTF-8 in OpenCC dictionary bundle: {e}"))
-    }
-
-    fn read_exact(&mut self, len: usize) -> Result<&'a [u8], String> {
-        let end = self
-            .pos
-            .checked_add(len)
-            .ok_or_else(|| "OpenCC dictionary bundle length overflow".to_owned())?;
-        if end > self.data.len() {
-            return Err("Truncated OpenCC dictionary bundle".to_owned());
+fn parse_dictionary(data: &str) -> Dict {
+    let mut map = Dict::new();
+    for line in data.lines() {
+        let Some((key, values)) = line.split_once('\t') else {
+            continue;
+        };
+        let Some(value) = values.split(' ').next() else {
+            continue;
+        };
+        if !key.is_empty() {
+            map.insert(key.to_owned(), value.to_owned());
         }
-        let out = &self.data[self.pos..end];
-        self.pos = end;
-        Ok(out)
     }
-
-    fn remaining(&self) -> usize {
-        self.data.len() - self.pos
-    }
+    map
 }
 
 #[cfg(test)]
@@ -221,23 +185,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundle_and_longest_match_work() {
-        let dicts = [
-            ("JPShinjitaiCharacters", "台\t臺\nA\tfirst\n"),
-            ("JPVariantsRev", "A\tsecond\n"),
-            ("TSCharacters", "臺\t台\n灣\t湾\nQ\tshort\nQR\tlong\n"),
-        ];
-        let mut bundle = Vec::new();
-        bundle.extend_from_slice(&(dicts.len() as u32).to_be_bytes());
-        for (name, data) in dicts {
-            bundle.extend_from_slice(&(name.len() as u32).to_be_bytes());
-            bundle.extend_from_slice(name.as_bytes());
-            bundle.extend_from_slice(&(data.len() as u32).to_be_bytes());
-            bundle.extend_from_slice(data.as_bytes());
-        }
-        init(&bundle).unwrap();
+    fn embedded_dictionaries_are_available_without_runtime_init() {
         assert_eq!(convert(0, "臺灣").unwrap(), "台湾");
-        assert_eq!(convert(0, "A").unwrap(), "second");
-        assert_eq!(convert(0, "QR").unwrap(), "long");
+    }
+
+    #[test]
+    fn merge_order_and_longest_match_match_legacy_converter() {
+        let mut dicts = DictSet::new();
+        dicts.insert("first", parse_dictionary("A\tfirst\n"));
+        dicts.insert("second", parse_dictionary("A\tsecond\n"));
+        dicts.insert("longest", parse_dictionary("Q\tshort\nQR\tlong\n"));
+
+        let converter = Converter {
+            stages: vec![
+                build_stage(&dicts, &["first", "second"]).unwrap(),
+                build_stage(&dicts, &["longest"]).unwrap(),
+            ],
+        };
+        assert_eq!(apply_converter(&converter, "A QR"), "second long");
     }
 }

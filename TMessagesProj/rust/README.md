@@ -6,12 +6,12 @@ Migrated components currently include:
 
 - URL cleanup and tracking-query filtering
 - proxy URI parsing and WEB proxy validation
-- OpenCC conversion
+- OpenCC conversion, with dictionaries embedded into the Rust library at compile time
 - string helpers used by Momogram
 - anti-spam/filter decision state
 - secret-chat backup binary/JSON serialization and AES-256-GCM/PBKDF2 crypto
 
-Android framework and database access remain in Kotlin/Java. Deterministic parsing, conversion, serialization, crypto, and state-machine logic live in Rust so they can be tested independently.
+Android framework and database access remain in Kotlin/Java. Deterministic parsing, conversion, serialization, crypto, and state-machine logic live in Rust so they can be tested independently. OpenCC has no runtime JVM dictionary bootstrap; its dictionaries are compiled directly into the Rust library.
 
 ## Android build prerequisites
 

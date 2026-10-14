@@ -110,6 +110,8 @@ jobs:
               ],
               "moe/hx030/momogram/cc/CCConverter.kt": [
                   "AhoCorasickDoubleArrayTrie", "OpenCCUtil", "addTrie(",
+                  "ApplicationLoader", "ByteArrayOutputStream", "DataOutputStream",
+                  "CCDict", "initOpenCc",
               ],
           }
 
@@ -132,7 +134,7 @@ jobs:
                   "RustCore.encodeSecretBackup", "RustCore.decodeSecretBackup",
               ],
               "moe/hx030/momogram/cc/CCConverter.kt": [
-                  "RustCore.initOpenCc", "RustCore.openCcConvert",
+                  "RustCore.openCcConvert",
               ],
               "moe/hx030/momogram/MomoConfig.java": [
                   "RustCore.filterRegexValid",

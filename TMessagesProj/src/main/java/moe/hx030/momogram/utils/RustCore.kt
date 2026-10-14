@@ -19,9 +19,6 @@ object RustCore {
     fun stripAllQueries(src: String): String = nativeStripAllQueries(src)
 
     @JvmStatic
-    fun initOpenCc(bundle: ByteArray): Boolean = nativeInitOpenCc(bundle)
-
-    @JvmStatic
     fun openCcConvert(target: Int, input: String): String = nativeOpenCcConvert(target, input)
 
     @JvmStatic
@@ -143,7 +140,6 @@ object RustCore {
     @JvmStatic private external fun nativeIsTwitter(host: String): Boolean
     @JvmStatic private external fun nativeIsTwitterPreview(host: String): Boolean
     @JvmStatic private external fun nativeStripAllQueries(src: String): String
-    @JvmStatic private external fun nativeInitOpenCc(bundle: ByteArray): Boolean
     @JvmStatic private external fun nativeOpenCcConvert(target: Int, input: String): String
     @JvmStatic private external fun nativeGetSubString(text: String, left: String?, right: String?, last: Boolean): String
     @JvmStatic private external fun nativeIsInteger(value: String): Boolean
