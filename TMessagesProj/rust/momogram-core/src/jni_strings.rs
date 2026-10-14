@@ -18,7 +18,7 @@ pub extern "system" fn Java_moe_hx030_momogram_utils_RustCore_nativeGetSubString
         Ok(value) => value,
         Err(err) => return throw_and_null_string(&mut env, err),
     };
-    left = match get_optional_string(&mut env, &left) {
+    let left = match get_optional_string(&mut env, &left) {
         Ok(value) => value,
         Err(err) => return throw_and_null_string(&mut env, err),
     };
