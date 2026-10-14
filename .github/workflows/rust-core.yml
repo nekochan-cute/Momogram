@@ -7,6 +7,7 @@ on:
     paths:
       - 'TMessagesProj/rust/**'
       - 'TMessagesProj/src/main/assets/dictionary/**'
+      - 'TMessagesProj/src/main/assets/dictionary/**'
       - 'TMessagesProj/src/main/java/moe/hx030/momogram/cc/**'
       - 'TMessagesProj/src/main/java/moe/hx030/momogram/util/FilterUtils.java'
       - 'TMessagesProj/src/main/java/moe/hx030/momogram/utils/RustCore.kt'
@@ -22,6 +23,7 @@ on:
       - lifesupport
     paths:
       - 'TMessagesProj/rust/**'
+      - 'TMessagesProj/src/main/assets/dictionary/**'
       - 'TMessagesProj/src/main/assets/dictionary/**'
       - 'TMessagesProj/src/main/java/moe/hx030/momogram/cc/**'
       - 'TMessagesProj/src/main/java/moe/hx030/momogram/util/FilterUtils.java'
