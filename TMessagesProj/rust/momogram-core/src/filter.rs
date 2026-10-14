@@ -167,6 +167,8 @@ fn compile_javaish_regex(pattern: &str, flags: i32) -> Result<Regex, String> {
 mod tests {
     use super::*;
 
+    static PENDING_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn precheck_matches_expected_shortcuts() {
         assert_eq!(precheck(true, true, true, 5, 0, true), RESULT_BLOCKED);
@@ -176,6 +178,11 @@ mod tests {
 
     #[test]
     fn pending_state_is_owned_by_rust() {
+        let _guard = PENDING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _ = take_pending_ids();
+
         assert_eq!(decide(42, false, false, false, false, false, false), RESULT_PENDING);
         assert!(!pending_is_empty());
         assert_eq!(take_pending_ids(), vec![42]);
@@ -204,7 +211,11 @@ mod tests {
 
     #[test]
     fn pending_retry_counter_can_be_requeued_like_the_jvm_implementation() {
+        let _guard = PENDING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _ = take_pending_ids();
+
         bump_pending(77);
         bump_pending(77);
         bump_pending(77);
