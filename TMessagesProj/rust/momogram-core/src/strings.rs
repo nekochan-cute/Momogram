@@ -1,3 +1,4 @@
+use crate::java_compat::java_char_digit;
 use fancy_regex::Regex;
 use oxixml_unicode::case::simple_uppercase;
 use unicode_bidi::{bidi_class, BidiClass};
@@ -54,7 +55,50 @@ fn find_subslice(haystack: &[u16], needle: &[u16], start: usize, last: bool) -> 
 }
 
 pub fn is_integer(value: &str) -> bool {
-    value.parse::<i32>().is_ok()
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    let (negative, first_digit) = match first {
+        '-' => (true, None),
+        '+' => (false, None),
+        ch => (false, Some(ch)),
+    };
+
+    let limit = if negative {
+        i32::MAX as u64 + 1
+    } else {
+        i32::MAX as u64
+    };
+    let mut value = 0u64;
+    let mut saw_digit = false;
+
+    let mut consume = |ch: char| -> bool {
+        let Some(digit) = java_char_digit(ch, 10) else {
+            return false;
+        };
+        let digit = digit as u64;
+        if value > (limit - digit) / 10 {
+            return false;
+        }
+        value = value * 10 + digit;
+        saw_digit = true;
+        true
+    };
+
+    if let Some(ch) = first_digit {
+        if !consume(ch) {
+            return false;
+        }
+    }
+    for ch in chars {
+        if !consume(ch) {
+            return false;
+        }
+    }
+
+    saw_digit
 }
 
 pub fn replace_all_regex(content: &str, pattern: &str, replacement: Option<&str>) -> Result<String, String> {
@@ -284,6 +328,19 @@ mod tests {
             get_sub_string("x<abc>y", Some("<"), Some(">"), true).unwrap(),
             "abc"
         );
+    }
+
+    #[test]
+    fn integer_parsing_matches_kotlin_unicode_digit_semantics() {
+        assert!(is_integer("2147483647"));
+        assert!(is_integer("-2147483648"));
+        assert!(!is_integer("2147483648"));
+        assert!(!is_integer("-2147483649"));
+        assert!(is_integer("١٢٣"));
+        assert!(is_integer("１２３"));
+        assert!(!is_integer("𝟙"));
+        assert!(!is_integer("+"));
+        assert!(!is_integer(""));
     }
 
     #[test]

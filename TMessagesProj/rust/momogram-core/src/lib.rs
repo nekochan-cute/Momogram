@@ -1,3 +1,4 @@
+mod java_compat;
 mod filter;
 mod opencc;
 mod proxy;
