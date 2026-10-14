@@ -26,7 +26,7 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
         if !matches!(host.as_str(), "telegram.me" | "t.me" | "telegram.dog") {
             return None;
         }
-        let path = url.path();
+        let path = percent_decode_path(url.path());
         let proxy_type = if path.starts_with("/socks") {
             0
         } else if path.starts_with("/proxy") {
@@ -158,11 +158,19 @@ fn get_query_parameter(query: &str, name: &str) -> Option<String> {
 }
 
 fn percent_decode_uri_component(input: &str) -> String {
+    percent_decode(input, true)
+}
+
+fn percent_decode_path(input: &str) -> String {
+    percent_decode(input, false)
+}
+
+fn percent_decode(input: &str, plus_as_space: bool) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'+' {
+        if plus_as_space && bytes[i] == b'+' {
             out.push(b' ');
             i += 1;
             continue;
@@ -288,6 +296,15 @@ mod tests {
         assert_eq!(proxy.address, "example.com");
         assert_eq!(proxy.port, 1080);
         assert_eq!(proxy.user, "u");
+    }
+
+    #[test]
+    fn http_proxy_type_uses_decoded_android_path() {
+        let proxy = parse_proxy_uri(
+            "https://t.me/%73ocks?server=example.com&port=1080"
+        ).unwrap();
+        assert_eq!(proxy.proxy_type, 0);
+        assert_eq!(proxy.address, "example.com");
     }
 
     #[test]
