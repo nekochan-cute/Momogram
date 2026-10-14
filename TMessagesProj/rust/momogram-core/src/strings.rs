@@ -1,4 +1,4 @@
-use crate::java_compat::java_char_digit;
+use crate::java_compat::{java_char_digit, java_is_blank};
 use fancy_regex::Regex;
 use oxixml_unicode::case::simple_uppercase;
 use unicode_bidi::{bidi_class, BidiClass};
@@ -242,7 +242,7 @@ pub fn is_app_name(value: &str, a: &str, b: &str, c: &str) -> bool {
 pub fn append_csv(original: Option<&str>, addition: &str) -> String {
     match original {
         None => addition.to_owned(),
-        Some(value) if value.trim().is_empty() => addition.to_owned(),
+        Some(value) if java_is_blank(value) => addition.to_owned(),
         Some(value) => format!("{value},{addition}"),
     }
 }
@@ -328,6 +328,13 @@ mod tests {
             get_sub_string("x<abc>y", Some("<"), Some(">"), true).unwrap(),
             "abc"
         );
+    }
+
+    #[test]
+    fn append_csv_uses_java_blank_semantics() {
+        assert_eq!(append_csv(Some(" \t"), "x"), "x");
+        assert_eq!(append_csv(Some("\u{00A0}"), "x"), "\u{00A0},x");
+        assert_eq!(append_csv(Some("\u{0085}"), "x"), "\u{0085},x");
     }
 
     #[test]

@@ -36,9 +36,34 @@ pub(crate) fn java_char_digit(ch: char, radix: u8) -> Option<u8> {
     (digit < radix).then_some(digit)
 }
 
+pub(crate) fn java_char_is_whitespace(ch: char) -> bool {
+    match ch as u32 {
+        0x0009..=0x000D | 0x001C..=0x001F => true,
+        0x0020 | 0x1680 | 0x2000..=0x2006 | 0x2008..=0x200A | 0x2028 | 0x2029
+        | 0x205F | 0x3000 => true,
+        // Java deliberately excludes non-breaking spaces U+00A0, U+2007,
+        // and U+202F even though they are Unicode SPACE_SEPARATOR values.
+        _ => false,
+    }
+}
+
+pub(crate) fn java_is_blank(value: &str) -> bool {
+    value.is_empty() || value.chars().all(java_char_is_whitespace)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mirrors_java_whitespace_rules() {
+        assert!(java_is_blank(" \t\n"));
+        assert!(java_is_blank("\u{3000}"));
+        assert!(!java_is_blank("\u{00A0}"));
+        assert!(!java_is_blank("\u{2007}"));
+        assert!(!java_is_blank("\u{202F}"));
+        assert!(!java_is_blank("\u{0085}"));
+    }
 
     #[test]
     fn mirrors_java_unicode_digit_examples() {
