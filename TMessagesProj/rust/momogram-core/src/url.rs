@@ -1,23 +1,10 @@
 const TWITTER_DOMAINS: &[&str] = &["x.com", "twitter.com"];
-const TWITTER_PREVIEW_DOMAINS: &[&str] =
-    &["vxtwitter.com", "fxtwitter.com", "fixupx.com", "fixvx.com"];
+const TWITTER_PREVIEW_DOMAINS: &[&str] = &["vxtwitter.com", "fxtwitter.com", "fixupx.com", "fixvx.com"];
 const YOUTUBE_DOMAINS: &[&str] = &["youtube.com", "youtu.be"];
 const TRACKING_QUERY_PREFIXES: &[&str] = &["utm"];
 const TRACKING_QUERY_POSTFIXES: &[&str] = &[
-    "shid",
-    "clid",
-    "wtrid",
-    "spm",
-    "tracking_source",
-    "__s",
-    "__hssc",
-    "__hstc",
-    "hsCtaTracking",
-    "msclkid",
-    "oly_anon_id",
-    "oly_enc_id",
-    "rb_clickid",
-    "s_clid",
+    "shid", "clid", "wtrid", "spm", "tracking_source", "__s", "__hssc", "__hstc",
+    "hsCtaTracking", "msclkid", "oly_anon_id", "oly_enc_id", "rb_clickid", "s_clid",
     "wickedid",
 ];
 
@@ -31,6 +18,7 @@ struct ParsedUrl<'a> {
     fragment: Option<&'a str>,
 }
 
+
 pub fn is_twitter(host: &str) -> bool {
     TWITTER_DOMAINS.contains(&host)
 }
@@ -40,9 +28,7 @@ pub fn is_twitter_preview(host: &str) -> bool {
 }
 
 pub fn strip_all_queries(src: &str) -> String {
-    src.split_once('?')
-        .map(|(head, _)| head.to_owned())
-        .unwrap_or_else(|| src.to_owned())
+    src.split_once('?').map(|(head, _)| head.to_owned()).unwrap_or_else(|| src.to_owned())
 }
 
 pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> String {
@@ -54,11 +40,7 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
     }
 
     if TWITTER_DOMAINS.contains(&parsed.host) || TWITTER_PREVIEW_DOMAINS.contains(&parsed.host) {
-        let host = if patch_links {
-            "twitter.com"
-        } else {
-            parsed.host
-        };
+        let host = if patch_links { "twitter.com" } else { parsed.host };
         return format!("https://{host}{}", parsed.path);
     }
 
@@ -82,8 +64,7 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
     out.push_str("://");
     out.push_str(parsed.host);
     if let Some(port) = parsed.port {
-        let is_default =
-            (parsed.scheme == "http" && port == 80) || (parsed.scheme == "https" && port == 443);
+        let is_default = (parsed.scheme == "http" && port == 80) || (parsed.scheme == "https" && port == 443);
         if !is_default {
             out.push(':');
             out.push_str(&port.to_string());
@@ -98,24 +79,16 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
             if raw_pair.is_empty() {
                 continue;
             }
-            let raw_name = raw_pair
-                .split_once('=')
-                .map_or(raw_pair, |(name, _)| name);
+            let raw_name = raw_pair.split_once('=').map_or(raw_pair, |(name, _)| name);
             let decoded_name = percent_decode_query_component(raw_name);
             if seen_names.iter().any(|name| name == &decoded_name) {
                 continue;
             }
             seen_names.push(decoded_name.clone());
 
-            let blocked = TRACKING_QUERY_PREFIXES
-                .iter()
-                .any(|prefix| decoded_name.starts_with(prefix))
-                || TRACKING_QUERY_POSTFIXES
-                    .iter()
-                    .any(|prefix| decoded_name.starts_with(prefix))
-                || custom_blacklist
-                    .iter()
-                    .any(|blocked| decoded_name == *blocked);
+            let blocked = TRACKING_QUERY_PREFIXES.iter().any(|prefix| decoded_name.starts_with(prefix))
+                || TRACKING_QUERY_POSTFIXES.iter().any(|prefix| decoded_name.starts_with(prefix))
+                || custom_blacklist.iter().any(|blocked| decoded_name == *blocked);
             if blocked {
                 continue;
             }
@@ -134,10 +107,7 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
     out
 }
 
-fn first_query_pair<'a>(
-    query: &'a str,
-    wanted_name: &str,
-) -> Option<(&'a str, Option<&'a str>)> {
+fn first_query_pair<'a>(query: &'a str, wanted_name: &str) -> Option<(&'a str, Option<&'a str>)> {
     for raw_pair in query.split('&') {
         let (raw_name, raw_value) = raw_pair
             .split_once('=')
@@ -168,22 +138,13 @@ fn parse_url(src: &str) -> Option<ParsedUrl<'_>> {
         ""
     };
 
-    let authority = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, tail)| tail);
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, tail)| tail);
     let (host, port) = split_host_port(authority)?;
     if host.is_empty() {
         return None;
     }
 
-    Some(ParsedUrl {
-        scheme,
-        host,
-        port,
-        path,
-        query,
-        fragment,
-    })
+    Some(ParsedUrl { scheme, host, port, path, query, fragment })
 }
 
 fn split_host_port(authority: &str) -> Option<(&str, Option<u16>)> {
@@ -251,20 +212,13 @@ mod tests {
 
     #[test]
     fn keeps_non_http_urls_unchanged() {
-        assert_eq!(
-            clean_url("tg://resolve?domain=test", true, &[]),
-            "tg://resolve?domain=test"
-        );
+        assert_eq!(clean_url("tg://resolve?domain=test", true, &[]), "tg://resolve?domain=test");
     }
 
     #[test]
     fn rewrites_twitter_preview_and_drops_query() {
         assert_eq!(
-            clean_url(
-                "https://fxtwitter.com/user/status/1?utm_source=test#x",
-                true,
-                &[]
-            ),
+            clean_url("https://fxtwitter.com/user/status/1?utm_source=test#x", true, &[]),
             "https://twitter.com/user/status/1"
         );
     }
@@ -280,11 +234,7 @@ mod tests {
     #[test]
     fn youtube_keeps_only_timestamp() {
         assert_eq!(
-            clean_url(
-                "https://youtube.com/watch?v=abc&t=90&utm_source=x",
-                true,
-                &[]
-            ),
+            clean_url("https://youtube.com/watch?v=abc&t=90&utm_source=x", true, &[]),
             "https://youtube.com/watch?t=90"
         );
     }
@@ -292,25 +242,15 @@ mod tests {
     #[test]
     fn removes_tracking_and_custom_queries() {
         assert_eq!(
-            clean_url(
-                "https://example.com/a?foo=1&utm_source=x&clid=2&secret=3&bar=4#frag",
-                true,
-                &["secret"]
-            ),
+            clean_url("https://example.com/a?foo=1&utm_source=x&clid=2&secret=3&bar=4#frag", true, &["secret"]),
             "https://example.com/a?foo=1&bar=4#frag"
         );
     }
 
     #[test]
     fn removes_default_port_but_keeps_custom_port() {
-        assert_eq!(
-            clean_url("https://example.com:443/a?x=1", true, &[]),
-            "https://example.com/a?x=1"
-        );
-        assert_eq!(
-            clean_url("https://example.com:8443/a?x=1", true, &[]),
-            "https://example.com:8443/a?x=1"
-        );
+        assert_eq!(clean_url("https://example.com:443/a?x=1", true, &[]), "https://example.com/a?x=1");
+        assert_eq!(clean_url("https://example.com:8443/a?x=1", true, &[]), "https://example.com:8443/a?x=1");
     }
 
     #[test]

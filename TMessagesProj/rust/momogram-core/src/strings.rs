@@ -2,19 +2,13 @@ use fancy_regex::Regex;
 use unicode_bidi::{bidi_class, BidiClass};
 use uuid::Uuid;
 
-const RE_KEYS: &[char] = &[
-    '$', '(', ')', '*', '+', '.', '[', ']', '?', '\\', '^', '{', '}', '|',
-];
+const RE_KEYS: &[char] = &['$', '(', ')', '*', '+', '.', '[', ']', '?', '\\', '^', '{', '}', '|'];
 const RANDOM_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 pub fn get_sub_string(text: &str, left: Option<&str>, right: Option<&str>, last: bool) -> String {
     let text16: Vec<u16> = text.encode_utf16().collect();
-    let left16 = left
-        .filter(|s| !s.is_empty())
-        .map(|s| s.encode_utf16().collect::<Vec<_>>());
-    let right16 = right
-        .filter(|s| !s.is_empty())
-        .map(|s| s.encode_utf16().collect::<Vec<_>>());
+    let left16 = left.filter(|s| !s.is_empty()).map(|s| s.encode_utf16().collect::<Vec<_>>());
+    let right16 = right.filter(|s| !s.is_empty()).map(|s| s.encode_utf16().collect::<Vec<_>>());
 
     let start = match left16.as_deref() {
         None => 0,
@@ -58,11 +52,7 @@ pub fn is_integer(value: &str) -> bool {
     value.parse::<i32>().is_ok()
 }
 
-pub fn replace_all_regex(
-    content: &str,
-    pattern: &str,
-    replacement: Option<&str>,
-) -> Result<String, String> {
+pub fn replace_all_regex(content: &str, pattern: &str, replacement: Option<&str>) -> Result<String, String> {
     if content.is_empty() {
         return Ok(String::new());
     }
@@ -141,8 +131,7 @@ pub fn simple_uuid() -> String {
 
 pub fn is_rtl(value: Option<&str>) -> bool {
     value.is_some_and(|text| {
-        text.chars()
-            .any(|ch| matches!(bidi_class(ch), BidiClass::R | BidiClass::AL))
+        text.chars().any(|ch| matches!(bidi_class(ch), BidiClass::R | BidiClass::AL))
     })
 }
 
@@ -164,12 +153,9 @@ pub fn prefix_030(simple_name: &str) -> String {
     format!("030-{simple_name}")
 }
 
+
 pub fn select_name(use_old: bool, old: &str, current: &str) -> String {
-    if use_old {
-        old.to_owned()
-    } else {
-        current.to_owned()
-    }
+    if use_old { old.to_owned() } else { current.to_owned() }
 }
 
 pub fn is_app_name(value: &str, a: &str, b: &str, c: &str) -> bool {
@@ -241,18 +227,12 @@ mod tests {
 
     #[test]
     fn substring_uses_jvm_utf16_offsets() {
-        assert_eq!(
-            get_sub_string("😀<hello>😀", Some("<"), Some(">"), false),
-            "hello"
-        );
+        assert_eq!(get_sub_string("😀<hello>😀", Some("<"), Some(">"), false), "hello");
     }
 
     #[test]
     fn replacement_expands_numeric_groups() {
-        assert_eq!(
-            replace_all_regex("a12b34", r"(\d+)", Some("[$1]")).unwrap(),
-            "a[12]b[34]"
-        );
+        assert_eq!(replace_all_regex("a12b34", r"(\d+)", Some("[$1]")).unwrap(), "a[12]b[34]");
     }
 
     #[test]

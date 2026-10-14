@@ -53,8 +53,7 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
         return None;
     };
 
-    let params: Vec<(String, String)> =
-        form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+    let params: Vec<(String, String)> = form_urlencoded::parse(query.as_bytes()).into_owned().collect();
     let get = |name: &str| {
         params
             .iter()
@@ -243,9 +242,7 @@ mod tests {
 
     #[test]
     fn parses_socks_link() {
-        let proxy =
-            parse_proxy_uri("https://t.me/socks?server=example.com&port=1080&user=u&pass=p")
-                .unwrap();
+        let proxy = parse_proxy_uri("https://t.me/socks?server=example.com&port=1080&user=u&pass=p").unwrap();
         assert_eq!(proxy.proxy_type, 0);
         assert_eq!(proxy.address, "example.com");
         assert_eq!(proxy.port, 1080);
@@ -256,17 +253,11 @@ mod tests {
     fn marked_web_secret_roundtrips() {
         let secret = "0123456789abcdef0123456789abcdef";
         let marked = encode_marked_web_proxy_secret(secret);
-        assert_eq!(
-            decode_marked_web_proxy_secret(&marked).as_deref(),
-            Some(secret)
-        );
+        assert_eq!(decode_marked_web_proxy_secret(&marked).as_deref(), Some(secret));
     }
 
     #[test]
     fn normalizes_web_host() {
-        assert_eq!(
-            normalize_web_address("EXAMPLE.COM/path_a"),
-            "example.com/path_a"
-        );
+        assert_eq!(normalize_web_address("EXAMPLE.COM/path_a"), "example.com/path_a");
     }
 }
