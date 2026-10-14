@@ -223,9 +223,9 @@ mod tests {
     #[test]
     fn bundle_and_longest_match_work() {
         let dicts = [
-            ("JPShinjitaiCharacters", "台\t臺\n"),
-            ("JPVariantsRev", ""),
-            ("TSCharacters", "臺\t台\n灣\t湾\n"),
+            ("JPShinjitaiCharacters", "台\t臺\nA\tfirst\n"),
+            ("JPVariantsRev", "A\tsecond\n"),
+            ("TSCharacters", "臺\t台\n灣\t湾\nQ\tshort\nQR\tlong\n"),
         ];
         let mut bundle = Vec::new();
         bundle.extend_from_slice(&(dicts.len() as u32).to_be_bytes());
@@ -237,5 +237,7 @@ mod tests {
         }
         init(&bundle).unwrap();
         assert_eq!(convert(0, "臺灣").unwrap(), "台湾");
+        assert_eq!(convert(0, "A").unwrap(), "second");
+        assert_eq!(convert(0, "QR").unwrap(), "long");
     }
 }
