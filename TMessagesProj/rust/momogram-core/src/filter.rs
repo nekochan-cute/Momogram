@@ -2,7 +2,7 @@ use crate::opencc;
 use fancy_regex::Regex;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 pub const RESULT_BLOCKED: i32 = 0;
 pub const RESULT_PASSED: i32 = 1;
@@ -67,18 +67,19 @@ pub fn decide(
     RESULT_PASSED
 }
 
+fn pending_lock() -> MutexGuard<'static, HashMap<i64, i32>> {
+    PENDING_IDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn increment_pending(id: i64) -> i32 {
-    let mut pending = PENDING_IDS.lock().expect("pending id lock poisoned");
+    let mut pending = pending_lock();
     let value = pending.entry(id).or_insert(0);
     *value += 1;
     *value
 }
 
 fn remove_pending(id: i64) {
-    PENDING_IDS
-        .lock()
-        .expect("pending id lock poisoned")
-        .remove(&id);
+    pending_lock().remove(&id);
 }
 
 pub fn bump_pending(id: i64) {
@@ -86,14 +87,11 @@ pub fn bump_pending(id: i64) {
 }
 
 pub fn pending_is_empty() -> bool {
-    PENDING_IDS
-        .lock()
-        .expect("pending id lock poisoned")
-        .is_empty()
+    pending_lock().is_empty()
 }
 
 pub fn take_pending_ids() -> Vec<i64> {
-    let mut pending = PENDING_IDS.lock().expect("pending id lock poisoned");
+    let mut pending = pending_lock();
     let ids = pending.keys().copied().collect();
     pending.clear();
     ids
