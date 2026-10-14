@@ -47,6 +47,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Verify JNI declaration and export parity
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          root = pathlib.Path("TMessagesProj")
+          kotlin = (root / "src/main/java/moe/hx030/momogram/utils/RustCore.kt").read_text()
+          declared = set(re.findall(r"external fun (native[A-Za-z0-9_]+)", kotlin))
+
+          exported = set()
+          for path in (root / "rust/momogram-core/src").glob("jni_*.rs"):
+              exported.update(re.findall(
+                  r"Java_moe_hx030_momogram_utils_RustCore_(native[A-Za-z0-9_]+)",
+                  path.read_text(),
+              ))
+
+          missing = sorted(declared - exported)
+          extra = sorted(exported - declared)
+          if missing or extra:
+              raise SystemExit(f"JNI mismatch: missing={missing}, extra={extra}")
+          print(f"JNI parity OK: {len(declared)} methods")
+          PY
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
