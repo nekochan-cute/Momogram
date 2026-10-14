@@ -102,6 +102,16 @@ fn java_idn_to_ascii(host: &str, std3: bool) -> Option<String> {
         .ok()
 }
 
+#[allow(deprecated)]
+fn legacy_domain_to_ascii(value: &str, use_std3: bool) -> Result<String, idna::Errors> {
+    IdnaConfig::default()
+        .transitional_processing(true)
+        .use_std3_ascii_rules(use_std3)
+        .verify_dns_length(false)
+        .check_hyphens(false)
+        .to_ascii(value)
+}
+
 fn check_host_for_punycode(value: &str) -> bool {
     let mut has_latin = false;
     let mut has_non_latin = false;
@@ -344,6 +354,18 @@ mod tests {
         ).unwrap();
         assert_eq!(proxy.user, "a b");
         assert_eq!(proxy.password, "x+y");
+    }
+
+    #[test]
+    fn legacy_idn_uses_transitional_mapping_like_java() {
+        assert_eq!(
+            legacy_domain_to_ascii("aß.com", false).unwrap(),
+            "ass.com"
+        );
+        assert_eq!(
+            normalize_web_address("faß.de/path"),
+            "fass.de/path"
+        );
     }
 
     #[test]
