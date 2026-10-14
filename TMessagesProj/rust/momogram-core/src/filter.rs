@@ -114,11 +114,24 @@ pub fn matches(pattern: &str, flags: i32, text: &str, use_opencc: bool) -> Resul
 }
 
 fn compile_javaish_regex(pattern: &str, flags: i32) -> Result<Regex, String> {
+    const UNIX_LINES: i32 = 0x01;
     const CASE_INSENSITIVE: i32 = 0x02;
     const COMMENTS: i32 = 0x04;
     const MULTILINE: i32 = 0x08;
     const LITERAL: i32 = 0x10;
     const DOTALL: i32 = 0x20;
+    const UNICODE_CASE: i32 = 0x40;
+    const CANON_EQ: i32 = 0x80;
+    const UNICODE_CHARACTER_CLASS: i32 = 0x100;
+
+    if flags & (UNIX_LINES | CANON_EQ | UNICODE_CHARACTER_CLASS) != 0 {
+        return Err("Java Pattern flags require JVM fallback".to_owned());
+    }
+    if flags & CASE_INSENSITIVE != 0 && flags & UNICODE_CASE == 0 {
+        // java.util.regex.Pattern.CASE_INSENSITIVE is ASCII-only unless UNICODE_CASE
+        // is also enabled, while Rust regex case folding is Unicode-aware.
+        return Err("ASCII-only Java CASE_INSENSITIVE requires JVM fallback".to_owned());
+    }
 
     let mut body = if flags & LITERAL != 0 {
         regex::escape(pattern)
@@ -161,5 +174,19 @@ mod tests {
         assert!(!pending_is_empty());
         assert_eq!(take_pending_ids(), vec![42]);
         assert!(pending_is_empty());
+    }
+
+    #[test]
+    fn java_only_regex_flags_request_jvm_fallback() {
+        assert!(compile_javaish_regex("abc", 0x01).is_err());
+        assert!(compile_javaish_regex("abc", 0x80).is_err());
+        assert!(compile_javaish_regex("abc", 0x100).is_err());
+        assert!(compile_javaish_regex("ä", 0x02).is_err());
+    }
+
+    #[test]
+    fn unicode_case_insensitive_is_supported_when_java_requests_it() {
+        let regex = compile_javaish_regex("ä", 0x02 | 0x40).unwrap();
+        assert!(regex.is_match("Ä").unwrap());
     }
 }
