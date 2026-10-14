@@ -38,11 +38,13 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
         };
         (proxy_type, url.query()?.to_owned())
     } else if lower.starts_with("tg://") || lower.starts_with("tg:") {
-        let proxy_type = if lower.starts_with("tg://socks") || lower.starts_with("tg:socks") {
+        // Legacy Java first accepts the scheme case-insensitively, then checks
+        // the original URI string with case-sensitive startsWith("tg:...").
+        let proxy_type = if raw.starts_with("tg://socks") || raw.starts_with("tg:socks") {
             0
-        } else if lower.starts_with("tg://proxy") || lower.starts_with("tg:proxy") {
+        } else if raw.starts_with("tg://proxy") || raw.starts_with("tg:proxy") {
             1
-        } else if lower.starts_with("tg://webproxy") || lower.starts_with("tg:webproxy") {
+        } else if raw.starts_with("tg://webproxy") || raw.starts_with("tg:webproxy") {
             2
         } else {
             return None;
@@ -375,6 +377,12 @@ mod tests {
         let proxy = parse_proxy_uri("tg://socks?server=a%E4%BE%8B%E3%81%88.com&port=1080").unwrap();
         assert!(proxy.address.is_ascii());
         assert_ne!(proxy.address, "a例え.com");
+    }
+
+    #[test]
+    fn tg_command_keeps_legacy_case_sensitive_dispatch() {
+        assert!(parse_proxy_uri("TG://proxy?server=example.com&port=443&secret=abcdef").is_none());
+        assert!(parse_proxy_uri("tg://PROXY?server=example.com&port=443&secret=abcdef").is_none());
     }
 
     #[test]
