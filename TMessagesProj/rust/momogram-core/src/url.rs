@@ -75,7 +75,7 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
 
             let blocked = TRACKING_QUERY_PREFIXES.iter().any(|prefix| decoded_name.starts_with(prefix))
                 || TRACKING_QUERY_POSTFIXES.iter().any(|prefix| decoded_name.starts_with(prefix))
-                || custom_blacklist.iter().any(|blocked| *blocked == decoded_name);
+                || custom_blacklist.iter().any(|blocked| decoded_name == *blocked);
             if blocked {
                 continue;
             }
