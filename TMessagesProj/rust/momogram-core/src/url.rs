@@ -47,7 +47,7 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
     if YOUTUBE_DOMAINS.contains(&parsed.host) {
         let mut out = format!("https://{}{}", parsed.host, parsed.path);
         if let Some(query) = parsed.query {
-            if let Some(value) = first_query_value(query, "t") {
+            if let Some(value) = android_get_query_parameter(query, "t") {
                 out.push_str("?t=");
                 out.push_str(&uri_encode_component(&value));
             }
@@ -70,18 +70,7 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
 
     if let Some(query) = parsed.query {
         let mut first = true;
-        let mut seen_names: Vec<String> = Vec::new();
-        for raw_pair in query.split('&') {
-            if raw_pair.is_empty() {
-                continue;
-            }
-            let raw_name = raw_pair.split_once('=').map_or(raw_pair, |(name, _)| name);
-            let decoded_name = percent_decode_query_component(raw_name);
-            if seen_names.iter().any(|name| name == &decoded_name) {
-                continue;
-            }
-            seen_names.push(decoded_name.clone());
-
+        for decoded_name in query_parameter_names(query) {
             let blocked = TRACKING_QUERY_PREFIXES.iter().any(|prefix| decoded_name.starts_with(prefix))
                 || TRACKING_QUERY_POSTFIXES.iter().any(|prefix| decoded_name.starts_with(prefix))
                 || custom_blacklist.iter().any(|blocked| decoded_name == *blocked);
@@ -89,16 +78,17 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
                 continue;
             }
 
-            let raw_value = raw_pair
-                .split_once('=')
-                .map_or("", |(_, value)| value);
-            let decoded_value = percent_decode_query_component(raw_value);
+            // Android's Uri.getQueryParameter() canonical-encodes the decoded
+            // name before comparing it with the raw query. A non-canonical raw
+            // key can therefore appear in getQueryParameterNames() while its
+            // value lookup returns null.
+            let decoded_value = android_get_query_parameter(query, &decoded_name);
 
             out.push(if first { '?' } else { '&' });
             first = false;
             out.push_str(&uri_encode_component(&decoded_name));
             out.push('=');
-            out.push_str(&uri_encode_component(&decoded_value));
+            out.push_str(&uri_encode_component(decoded_value.as_deref().unwrap_or("null")));
         }
     }
 
@@ -110,15 +100,61 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
     out
 }
 
-fn first_query_value(query: &str, wanted_name: &str) -> Option<String> {
-    for raw_pair in query.split('&') {
-        let (raw_name, raw_value) = raw_pair
-            .split_once('=')
-            .map_or((raw_pair, ""), |(name, value)| (name, value));
-        if percent_decode_query_component(raw_name) == wanted_name {
-            return Some(percent_decode_query_component(raw_value));
+fn query_parameter_names(query: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut start = 0usize;
+
+    loop {
+        let end = query[start..]
+            .find('&')
+            .map(|offset| start + offset)
+            .unwrap_or(query.len());
+        let pair = &query[start..end];
+        let separator = pair.find('=').unwrap_or(pair.len());
+        let name = percent_decode_query_component(&pair[..separator], false);
+        if !names.iter().any(|existing| existing == &name) {
+            names.push(name);
+        }
+
+        if end == query.len() {
+            break;
+        }
+        start = end + 1;
+        if start > query.len() {
+            break;
         }
     }
+
+    names
+}
+
+fn android_get_query_parameter(query: &str, wanted_name: &str) -> Option<String> {
+    let encoded_name = uri_encode_component(wanted_name);
+    let mut start = 0usize;
+
+    loop {
+        let end = query[start..]
+            .find('&')
+            .map(|offset| start + offset)
+            .unwrap_or(query.len());
+        let pair = &query[start..end];
+        let separator = pair.find('=').unwrap_or(pair.len());
+        if &pair[..separator] == encoded_name {
+            if separator == pair.len() {
+                return Some(String::new());
+            }
+            return Some(percent_decode_query_component(&pair[separator + 1..], true));
+        }
+
+        if end == query.len() {
+            break;
+        }
+        start = end + 1;
+        if start > query.len() {
+            break;
+        }
+    }
+
     None
 }
 
@@ -172,12 +208,16 @@ fn split_host_port(authority: &str) -> Option<(&str, Option<u16>)> {
     Some((authority, None))
 }
 
-fn percent_decode_query_component(input: &str) -> String {
+fn percent_decode_query_component(input: &str, convert_plus: bool) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
+            b'+' if convert_plus => {
+                out.push(b' ');
+                i += 1;
+            }
             b'%' if i + 2 < bytes.len() => {
                 if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
                     out.push((hi << 4) | lo);
@@ -287,15 +327,23 @@ mod tests {
     fn canonicalizes_query_like_android_uri_builder() {
         assert_eq!(
             clean_url("https://example.com/?q=a+b&flag", true, &[]),
-            "https://example.com/?q=a%2Bb&flag="
+            "https://example.com/?q=a%20b&flag="
         );
     }
 
     #[test]
-    fn youtube_timestamp_preserves_plus_as_literal_plus() {
+    fn youtube_timestamp_decodes_plus_like_android_uri() {
         assert_eq!(
             clean_url("https://youtube.com/watch?t=1+2", true, &[]),
-            "https://youtube.com/watch?t=1%2B2"
+            "https://youtube.com/watch?t=1%202"
+        );
+    }
+
+    #[test]
+    fn noncanonical_query_key_matches_android_null_lookup_behavior() {
+        assert_eq!(
+            clean_url("https://example.com/?fo%6f=bar&ok=1", true, &[]),
+            "https://example.com/?foo=null&ok=1"
         );
     }
 
