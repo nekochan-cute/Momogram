@@ -41,11 +41,11 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
 
     if TWITTER_DOMAINS.contains(&parsed.host) || TWITTER_PREVIEW_DOMAINS.contains(&parsed.host) {
         let host = if patch_links { "twitter.com" } else { parsed.host };
-        return format!("https://{host}{}", parsed.path);
+        return format!("https://{host}{}", android_builder_path(parsed.path));
     }
 
     if YOUTUBE_DOMAINS.contains(&parsed.host) {
-        let mut out = format!("https://{}{}", parsed.host, parsed.path);
+        let mut out = format!("https://{}{}", parsed.host, android_builder_path(parsed.path));
         if let Some(query) = parsed.query {
             if let Some(value) = android_get_query_parameter(query, "t") {
                 out.push_str("?t=");
@@ -66,7 +66,7 @@ pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> Str
             out.push_str(&port.to_string());
         }
     }
-    out.push_str(parsed.path);
+    out.push_str(&legacy_general_builder_path(parsed.path));
 
     if let Some(query) = parsed.query {
         let mut first = true;
@@ -208,6 +208,34 @@ fn split_host_port(authority: &str) -> Option<(&str, Option<u16>)> {
     Some((authority, None))
 }
 
+fn android_builder_path(raw_path: &str) -> String {
+    let decoded = percent_decode_query_component(raw_path, false);
+    uri_encode_path(&decoded)
+}
+
+fn legacy_general_builder_path(raw_path: &str) -> String {
+    let decoded = percent_decode_query_component(raw_path, false);
+    let segment = decoded.replacen('/', "", 1);
+    format!("/{segment}")
+}
+
+fn uri_encode_path(input: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(input.len());
+    for &byte in input.as_bytes() {
+        let allowed = byte.is_ascii_alphanumeric()
+            || matches!(byte, b'_' | b'-' | b'!' | b'.' | b'~' | b'\'' | b'(' | b')' | b'*' | b'/');
+        if allowed {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    out
+}
+
 fn percent_decode_query_component(input: &str, convert_plus: bool) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -306,6 +334,30 @@ mod tests {
         assert_eq!(
             clean_url("https://example.com/a?foo=1&utm_source=x&clid=2&secret=3&bar=4#frag", true, &["secret"]),
             "https://example.com/a?foo=1&bar=4#frag"
+        );
+    }
+
+    #[test]
+    fn general_builder_always_appends_a_path_segment() {
+        assert_eq!(
+            clean_url("https://example.com?x=1", true, &[]),
+            "https://example.com/?x=1"
+        );
+    }
+
+    #[test]
+    fn general_builder_uses_decoded_path_as_encoded_path() {
+        assert_eq!(
+            clean_url("https://example.com/a%20b%2Fc?x=1", true, &[]),
+            "https://example.com/a b/c?x=1"
+        );
+    }
+
+    #[test]
+    fn twitter_builder_decodes_then_reencodes_path() {
+        assert_eq!(
+            clean_url("https://twitter.com/a%2Fb+c", true, &[]),
+            "https://twitter.com/a/b%2Bc"
         );
     }
 
