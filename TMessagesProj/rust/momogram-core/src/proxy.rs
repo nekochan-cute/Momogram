@@ -162,6 +162,11 @@ fn percent_decode_uri_component(input: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
+        if bytes[i] == b'+' {
+            out.push(b' ');
+            i += 1;
+            continue;
+        }
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let (Some(hi), Some(lo)) = (hex_nibble(bytes[i + 1]), hex_nibble(bytes[i + 2])) {
                 out.push((hi << 4) | lo);
@@ -286,11 +291,11 @@ mod tests {
     }
 
     #[test]
-    fn query_values_preserve_plus_like_android_uri() {
+    fn query_values_decode_plus_like_android_uri() {
         let proxy = parse_proxy_uri(
             "tg://socks?server=example.com&port=1080&user=a+b&pass=x%2By"
         ).unwrap();
-        assert_eq!(proxy.user, "a+b");
+        assert_eq!(proxy.user, "a b");
         assert_eq!(proxy.password, "x+y");
     }
 
