@@ -80,6 +80,7 @@ jobs:
           removed = [
               "moe/hx030/momogram/cc/AhoCorasickDoubleArrayTrie.java",
               "moe/hx030/momogram/cc/OpenCCUtil.kt",
+              "moe/hx030/momogram/cc/CCDict.kt",
           ]
           for rel in removed:
               path = java / rel
