@@ -1,4 +1,5 @@
 use fancy_regex::Regex;
+use oxixml_unicode::case::simple_uppercase;
 use unicode_bidi::{bidi_class, BidiClass};
 use uuid::Uuid;
 
@@ -142,7 +143,7 @@ pub fn first_char_upper(value: Option<&str>) -> Option<String> {
     }
     let mut chars = value.chars();
     let first = chars.next()?;
-    let upper = first.to_uppercase().next().unwrap_or(first);
+    let upper = simple_uppercase(first);
     let mut out = String::with_capacity(value.len());
     out.push(upper);
     out.push_str(chars.as_str());
@@ -245,5 +246,11 @@ mod tests {
         let value = randomize_file_name("photo.jpg").unwrap();
         assert_eq!(value.len(), 10);
         assert!(value.ends_with(".jpg"));
+    }
+
+    #[test]
+    fn first_char_upper_matches_kotlin_one_to_one_mapping() {
+        assert_eq!(first_char_upper(Some("abc")).as_deref(), Some("Abc"));
+        assert_eq!(first_char_upper(Some("ßeta")).as_deref(), Some("ßeta"));
     }
 }
