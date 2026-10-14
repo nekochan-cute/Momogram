@@ -81,6 +81,10 @@ fn remove_pending(id: i64) {
         .remove(&id);
 }
 
+pub fn bump_pending(id: i64) {
+    increment_pending(id);
+}
+
 pub fn pending_is_empty() -> bool {
     PENDING_IDS
         .lock()
@@ -188,5 +192,15 @@ mod tests {
     fn unicode_case_insensitive_is_supported_when_java_requests_it() {
         let regex = compile_javaish_regex("ä", 0x02 | 0x40).unwrap();
         assert!(regex.is_match("Ä").unwrap());
+    }
+
+    #[test]
+    fn pending_retry_counter_can_be_requeued_like_the_jvm_implementation() {
+        let _ = take_pending_ids();
+        bump_pending(77);
+        bump_pending(77);
+        bump_pending(77);
+        assert_eq!(decide(77, true, false, false, false, false, false), RESULT_PENDING);
+        assert!(pending_is_empty());
     }
 }

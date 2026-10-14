@@ -135,7 +135,9 @@ public class FilterUtils {
         Log.d("030-filter", String.format("checkPendingIds: count=%d", pending.length));
         Utilities.stageQueue.postRunnable(() -> {
             for (long id : pending) {
-                filterPM(currentAccount, null, id, null, null);
+                if (filterPM(currentAccount, null, id, null, null) == Result.Pending) {
+                    RustCore.bumpPendingId(id);
+                }
             }
         });
     }

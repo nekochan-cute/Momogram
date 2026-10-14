@@ -95,6 +95,9 @@ object RustCore {
     )
 
     @JvmStatic
+    fun bumpPendingId(senderId: Long) = nativeBumpPendingId(senderId)
+
+    @JvmStatic
     fun pendingIsEmpty(): Boolean = nativePendingIsEmpty()
 
     @JvmStatic
@@ -154,6 +157,7 @@ object RustCore {
     @JvmStatic private external fun nativeMentionRanges(text: String): IntArray
     @JvmStatic private external fun nativeFilterPrecheck(ignoreBlocked: Boolean, isBlocked: Boolean, autoArchive: Boolean, senderId: Long, chatId: Long, isFromUser: Boolean): Int
     @JvmStatic private external fun nativeFilterDecide(senderId: Long, isService: Boolean, isContact: Boolean, existingChat: Boolean, currentUserPresent: Boolean, currentUserIsBot: Boolean, noCommonGroupOnly: Boolean): Int
+    @JvmStatic private external fun nativeBumpPendingId(senderId: Long)
     @JvmStatic private external fun nativePendingIsEmpty(): Boolean
     @JvmStatic private external fun nativeTakePendingIds(): LongArray
     @JvmStatic private external fun nativeFilterMatches(pattern: String, flags: Int, text: String, useOpenCc: Boolean): Int

@@ -50,6 +50,15 @@ pub extern "system" fn Java_moe_hx030_momogram_utils_RustCore_nativeFilterDecide
 }
 
 #[no_mangle]
+pub extern "system" fn Java_moe_hx030_momogram_utils_RustCore_nativeBumpPendingId(
+    _env: JNIEnv,
+    _class: JClass,
+    sender_id: jlong,
+) {
+    filter::bump_pending(sender_id);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_moe_hx030_momogram_utils_RustCore_nativePendingIsEmpty(
     _env: JNIEnv,
     _class: JClass,
