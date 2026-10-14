@@ -70,6 +70,89 @@ jobs:
               raise SystemExit(f"JNI mismatch: missing={missing}, extra={extra}")
           print(f"JNI parity OK: {len(declared)} methods")
           PY
+      - name: Verify Rust migration boundaries
+        run: |
+          python3 - <<'PY'
+          import pathlib
+
+          java = pathlib.Path("TMessagesProj/src/main/java")
+
+          removed = [
+              "moe/hx030/momogram/cc/AhoCorasickDoubleArrayTrie.java",
+              "moe/hx030/momogram/cc/OpenCCUtil.kt",
+          ]
+          for rel in removed:
+              path = java / rel
+              if path.exists():
+                  raise SystemExit(f"Legacy implementation returned: {rel}")
+
+          forbidden = {
+              "moe/hx030/momogram/util/FilterUtils.java": [
+                  "java.util.regex.Pattern", ".matcher(", "CCConverter", "CCTarget",
+              ],
+              "moe/hx030/momogram/utils/StrUtil.kt": [
+                  "java.util.regex.", "Pattern.compile", "UUID.randomUUID",
+                  "Random.nextInt", "Character.getDirectionality",
+              ],
+              "moe/hx030/momogram/utils/UrlUtil.kt": [
+                  "queryParameterNames", "getQueryParameter(", "twitterDomains",
+                  "trackingQueryPrefixes", "trackingQueryPostfixes",
+              ],
+              "org/telegram/utils/proxy/ProxySettings.java": [
+                  "URLDecoder", "IDN.", "Pattern.compile", "getQueryParameter(",
+                  "decodeMarkedWebProxySecretImpl",
+              ],
+              "moe/hx030/momogram/helpers/SecretChatBackupManager.java": [
+                  "javax.crypto", "SecretKeyFactory", "Cipher.getInstance",
+                  "SecureRandom", "PBKDF2WithHmacSHA256", "encryptPayload(",
+                  "decryptPayload(", "deriveKey(", "serializeBinary(",
+                  "deserializeBinary(",
+              ],
+              "moe/hx030/momogram/cc/CCConverter.kt": [
+                  "AhoCorasickDoubleArrayTrie", "OpenCCUtil", "addTrie(",
+              ],
+          }
+
+          required = {
+              "moe/hx030/momogram/util/FilterUtils.java": [
+                  "RustCore.filterPrecheck", "RustCore.filterDecide",
+                  "RustCore.filterMatches",
+              ],
+              "moe/hx030/momogram/utils/StrUtil.kt": [
+                  "RustCore.mentionRanges", "RustCore.replaceAllRegex",
+                  "RustCore.randomizeFileName",
+              ],
+              "moe/hx030/momogram/utils/UrlUtil.kt": [
+                  "RustCore.cleanUrl", "RustCore.stripAllQueries",
+              ],
+              "org/telegram/utils/proxy/ProxySettings.java": [
+                  "RustCore.parseProxyUri", "RustCore.proxyNormalizeWebAddress",
+              ],
+              "moe/hx030/momogram/helpers/SecretChatBackupManager.java": [
+                  "RustCore.encodeSecretBackup", "RustCore.decodeSecretBackup",
+              ],
+              "moe/hx030/momogram/cc/CCConverter.kt": [
+                  "RustCore.initOpenCc", "RustCore.openCcConvert",
+              ],
+              "moe/hx030/momogram/MomoConfig.java": [
+                  "RustCore.filterRegexValid",
+              ],
+          }
+
+          for rel, needles in forbidden.items():
+              source = (java / rel).read_text()
+              hits = [needle for needle in needles if needle in source]
+              if hits:
+                  raise SystemExit(f"Legacy JVM logic found in {rel}: {hits}")
+
+          for rel, needles in required.items():
+              source = (java / rel).read_text()
+              missing = [needle for needle in needles if needle not in source]
+              if missing:
+                  raise SystemExit(f"Rust delegation missing in {rel}: {missing}")
+
+          print("Rust migration boundaries OK")
+          PY
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
