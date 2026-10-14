@@ -33,6 +33,10 @@ on:
       - '.github/workflows/rust-core.yml'
   workflow_dispatch:
 
+concurrency:
+  group: rust-core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
