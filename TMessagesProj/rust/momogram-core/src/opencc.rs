@@ -203,6 +203,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn embedded_dictionary_source_format_is_well_formed() {
+        for (name, data) in DICT_SOURCES {
+            for (index, line) in data.lines().enumerate() {
+                if line.is_empty() {
+                    continue;
+                }
+                let (key, _) = line
+                    .split_once('\t')
+                    .unwrap_or_else(|| panic!("{name}:{} is missing a tab", index + 1));
+                assert!(!key.is_empty(), "{name}:{} has an empty key", index + 1);
+            }
+        }
+    }
+
+    #[test]
     fn embedded_dictionaries_are_available_without_runtime_init() {
         assert_eq!(convert(0, "臺灣").unwrap(), "台湾");
     }
