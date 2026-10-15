@@ -1,5 +1,4 @@
 use crate::java_compat::{java_is_blank, java_parse_i32, kotlin_is_blank};
-use fancy_regex::Regex;
 use oxixml_unicode::case::simple_uppercase;
 use unicode_bidi::{bidi_class, BidiClass};
 use uuid::Uuid;
@@ -65,8 +64,7 @@ pub fn replace_all_regex(content: &str, pattern: &str, replacement: Option<&str>
 
     // Legacy Kotlin compiles the Pattern before inspecting a nullable
     // replacement template, so invalid regex syntax must still surface.
-    let wrapped = format!("(?s:{pattern})");
-    let regex = Regex::new(&wrapped).map_err(|e| e.to_string())?;
+    let regex = crate::java_regex::compile(pattern, crate::java_regex::DOTALL)?;
     let Some(template) = replacement else {
         return Ok(content.to_owned());
     };

@@ -1,5 +1,4 @@
 use crate::opencc;
-use fancy_regex::Regex;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
@@ -119,48 +118,8 @@ pub fn matches(pattern: &str, flags: i32, text: &str, use_opencc: bool) -> Resul
     Ok(false)
 }
 
-fn compile_javaish_regex(pattern: &str, flags: i32) -> Result<Regex, String> {
-    const UNIX_LINES: i32 = 0x01;
-    const CASE_INSENSITIVE: i32 = 0x02;
-    const COMMENTS: i32 = 0x04;
-    const MULTILINE: i32 = 0x08;
-    const LITERAL: i32 = 0x10;
-    const DOTALL: i32 = 0x20;
-    const UNICODE_CASE: i32 = 0x40;
-    const CANON_EQ: i32 = 0x80;
-    const UNICODE_CHARACTER_CLASS: i32 = 0x100;
-
-    if flags & (UNIX_LINES | CANON_EQ | UNICODE_CHARACTER_CLASS) != 0 {
-        return Err("Java Pattern flags require JVM fallback".to_owned());
-    }
-    if flags & CASE_INSENSITIVE != 0 && flags & UNICODE_CASE == 0 {
-        // java.util.regex.Pattern.CASE_INSENSITIVE is ASCII-only unless UNICODE_CASE
-        // is also enabled, while Rust regex case folding is Unicode-aware.
-        return Err("ASCII-only Java CASE_INSENSITIVE requires JVM fallback".to_owned());
-    }
-
-    let mut body = if flags & LITERAL != 0 {
-        regex::escape(pattern)
-    } else {
-        pattern.to_owned()
-    };
-    let mut modifiers = String::new();
-    if flags & CASE_INSENSITIVE != 0 {
-        modifiers.push('i');
-    }
-    if flags & COMMENTS != 0 {
-        modifiers.push('x');
-    }
-    if flags & MULTILINE != 0 {
-        modifiers.push('m');
-    }
-    if flags & DOTALL != 0 {
-        modifiers.push('s');
-    }
-    if !modifiers.is_empty() {
-        body = format!("(?{modifiers}:{body})");
-    }
-    Regex::new(&body).map_err(|e| e.to_string())
+fn compile_javaish_regex(pattern: &str, flags: i32) -> Result<fancy_regex::Regex, String> {
+    crate::java_regex::compile(pattern, flags)
 }
 
 #[cfg(test)]

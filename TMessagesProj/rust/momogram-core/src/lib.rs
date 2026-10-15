@@ -1,4 +1,5 @@
 mod java_compat;
+mod java_regex;
 mod filter;
 mod opencc;
 mod proxy;
