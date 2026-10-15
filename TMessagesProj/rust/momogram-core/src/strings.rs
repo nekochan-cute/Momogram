@@ -1,5 +1,6 @@
 use crate::java_compat::{java_is_blank, java_parse_i32, kotlin_is_blank};
 use oxixml_unicode::case::simple_uppercase;
+use once_cell::sync::Lazy;
 use unicode_bidi::{bidi_class, BidiClass};
 use uuid::Uuid;
 
@@ -225,6 +226,13 @@ pub fn randomize_file_name(name: &str) -> Result<String, String> {
     Ok(out)
 }
 
+fn android_regex_digit(ch: char) -> bool {
+    static DIGIT: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new(r"^\d$").expect("static Unicode digit regex"));
+    let mut buf = [0u8; 4];
+    DIGIT.is_match(ch.encode_utf8(&mut buf))
+}
+
 pub fn mention_ranges(text: &str) -> Vec<i32> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut result = Vec::new();
@@ -247,7 +255,7 @@ pub fn mention_ranges(text: &str) -> Vec<i32> {
         let mut count = 0;
         while end < chars.len() && count < 32 {
             let ch = chars[end].1;
-            if !(ch.is_ascii_alphanumeric() || ch == '_') {
+            if !(ch.is_ascii_alphabetic() || android_regex_digit(ch) || ch == '_') {
                 break;
             }
             end += 1;
@@ -353,6 +361,11 @@ mod tests {
     #[test]
     fn mentions_report_utf16_ranges() {
         assert_eq!(mention_ranges("😀 @abc x"), vec![3, 7]);
+        assert_eq!(mention_ranges("@a１２٣_ z"), vec![0, 6]);
+        // A supplementary Unicode decimal digit counts as one regex character
+        // but two UTF-16 code units in Android span offsets.
+        assert_eq!(mention_ranges("@a𝟙_ z"), vec![0, 5]);
+        assert!(mention_ranges("@é").is_empty());
     }
 
     #[test]
