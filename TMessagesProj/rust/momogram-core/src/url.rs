@@ -197,43 +197,28 @@ fn parse_url(src: &str) -> Option<ParsedUrl<'_>> {
 }
 
 fn split_host_port(authority: &str) -> Option<(&str, Option<u16>)> {
-    if authority.starts_with('[') {
-        let Some(close) = authority.find(']') else {
-            return Some((authority, None));
-        };
-        let host = &authority[..=close];
-        let remainder = &authority[close + 1..];
-        if remainder.is_empty() {
-            return Some((host, None));
+    let separator = authority.char_indices().rev().find_map(|(index, ch)| {
+        if ch == ':' {
+            Some(Some(index))
+        } else if ch.is_ascii_digit() {
+            None
+        } else {
+            Some(None)
         }
-        if let Some(candidate_port) = remainder.strip_prefix(':') {
-            if candidate_port.bytes().all(|b| b.is_ascii_digit()) {
-                let port = candidate_port
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|port| (1..=u16::MAX as u32).contains(port))
-                    .map(|port| port as u16);
-                return Some((host, port));
-            }
-        }
-        // A non-numeric suffix is not treated as a port by Android Uri.
-        return Some((authority, None));
-    }
+    }).flatten();
 
-    if let Some((host, candidate_port)) = authority.rsplit_once(':') {
-        if candidate_port.bytes().all(|b| b.is_ascii_digit()) {
-            // Android Uri.findPortSeparator() separates any trailing numeric
-            // port (including an empty suffix after ':'), even if the host
-            // itself contains another colon.
-            let port = candidate_port
-                .parse::<u32>()
-                .ok()
-                .filter(|port| (1..=u16::MAX as u32).contains(port))
-                .map(|port| port as u16);
-            return Some((host, port));
-        }
-    }
-    Some((authority, None))
+    let Some(separator) = separator else {
+        return Some((authority, None));
+    };
+
+    let host = &authority[..separator];
+    let candidate_port = &authority[separator + 1..];
+    let port = candidate_port
+        .parse::<u64>()
+        .ok()
+        .filter(|port| (1..=u16::MAX as u64).contains(port))
+        .map(|port| port as u16);
+    Some((host, port))
 }
 
 fn android_builder_path(raw_path: &str) -> String {
@@ -401,6 +386,18 @@ mod tests {
         assert_eq!(
             clean_url("https://twitter.com/a%2Fb+c", true, &[]),
             "https://twitter.com/a/b%2Bc"
+        );
+    }
+
+    #[test]
+    fn malformed_bracketed_authority_uses_same_trailing_port_rule() {
+        assert_eq!(
+            clean_url("https://[::1]extra:123/p", true, &[]),
+            "https://[::1]extra:123/p"
+        );
+        assert_eq!(
+            clean_url("https://[::1]extra:0/p", true, &[]),
+            "https://%5B%3A%3A1%5Dextra/p"
         );
     }
 
