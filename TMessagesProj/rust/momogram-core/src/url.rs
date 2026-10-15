@@ -219,11 +219,10 @@ fn split_host_port(authority: &str) -> Option<(&str, Option<u16>)> {
     }
 
     if let Some((host, candidate_port)) = authority.rsplit_once(':') {
-        if !host.contains(':') && candidate_port.bytes().all(|b| b.is_ascii_digit()) {
+        if candidate_port.bytes().all(|b| b.is_ascii_digit()) {
             // Android Uri.findPortSeparator() separates any trailing numeric
-            // port (including an empty suffix after ':'), while cleanUrl only
-            // re-emits ports in 1..=65535. Invalid/out-of-range numeric ports
-            // are therefore dropped rather than treated as part of the host.
+            // port (including an empty suffix after ':'), even if the host
+            // itself contains another colon.
             let port = candidate_port
                 .parse::<u32>()
                 .ok()
@@ -397,6 +396,18 @@ mod tests {
         assert_eq!(
             clean_url("https://twitter.com/a%2Fb+c", true, &[]),
             "https://twitter.com/a/b%2Bc"
+        );
+    }
+
+    #[test]
+    fn trailing_numeric_port_wins_even_with_multiple_colons() {
+        assert_eq!(
+            clean_url("https://a:b:123/p", true, &[]),
+            "https://a:b:123/p"
+        );
+        assert_eq!(
+            clean_url("https://a:b:0/p", true, &[]),
+            "https://a%3Ab/p"
         );
     }
 
