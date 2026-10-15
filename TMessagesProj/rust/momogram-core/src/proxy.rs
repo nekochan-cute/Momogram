@@ -5,7 +5,6 @@ use idna::Config;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
-use url::Url;
 
 const WEB_PROXY_PATH_SECRET_MARKER: u8 = 0x70;
 
@@ -22,22 +21,7 @@ pub struct ParsedProxy {
 pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
     let lower = raw.to_ascii_lowercase();
     let (proxy_type, query) = if lower.starts_with("http://") || lower.starts_with("https://") {
-        let url = Url::parse(raw).ok()?;
-        let host = url.host_str()?.to_ascii_lowercase();
-        if !matches!(host.as_str(), "telegram.me" | "t.me" | "telegram.dog") {
-            return None;
-        }
-        let path = percent_decode_path(url.path());
-        let proxy_type = if path.starts_with("/socks") {
-            0
-        } else if path.starts_with("/proxy") {
-            1
-        } else if path.starts_with("/webproxy") {
-            2
-        } else {
-            return None;
-        };
-        (proxy_type, url.query().unwrap_or("").to_owned())
+        parse_http_proxy_link(raw)?
     } else if lower.starts_with("tg://") || lower.starts_with("tg:") {
         // Legacy Java first accepts the scheme case-insensitively, then checks
         // the original URI string with case-sensitive startsWith("tg:...").
@@ -91,6 +75,71 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
         password,
         secret,
     })
+}
+
+fn parse_http_proxy_link(raw: &str) -> Option<(i32, String)> {
+    let scheme_end = raw.find(':')?;
+    let hierarchical = raw.get(scheme_end + 1..)?.strip_prefix("//")?;
+
+    let authority_end = hierarchical
+        .find(|ch| matches!(ch, '/' | '?' | '#'))
+        .unwrap_or(hierarchical.len());
+    let authority = &hierarchical[..authority_end];
+
+    let user_info_end = authority.rfind('@').map(|i| i + 1).unwrap_or(0);
+    let port_separator = android_port_separator(authority);
+    let host_end = port_separator.unwrap_or(authority.len());
+    if user_info_end > host_end {
+        return None;
+    }
+    let host = percent_decode_path(&authority[user_info_end..host_end]).to_ascii_lowercase();
+    if !matches!(host.as_str(), "telegram.me" | "t.me" | "telegram.dog") {
+        return None;
+    }
+
+    let tail = &hierarchical[authority_end..];
+    let path_end = [tail.find('?'), tail.find('#')]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(tail.len());
+    let path = percent_decode_path(&tail[..path_end]);
+    let proxy_type = if path.starts_with("/socks") {
+        0
+    } else if path.starts_with("/proxy") {
+        1
+    } else if path.starts_with("/webproxy") {
+        2
+    } else {
+        return None;
+    };
+
+    let query = match tail.find('?') {
+        Some(query_start) => {
+            let fragment = tail.find('#');
+            if fragment.is_some_and(|fragment_start| fragment_start < query_start) {
+                String::new()
+            } else {
+                let end = fragment.unwrap_or(tail.len());
+                tail[query_start + 1..end].to_owned()
+            }
+        }
+        None => String::new(),
+    };
+
+    Some((proxy_type, query))
+}
+
+fn android_port_separator(authority: &str) -> Option<usize> {
+    for (index, ch) in authority.char_indices().rev() {
+        if ch == ':' {
+            return Some(index);
+        }
+        if !ch.is_ascii_digit() {
+            return None;
+        }
+    }
+    None
 }
 
 #[allow(deprecated)]
@@ -321,6 +370,30 @@ fn bytes_to_hex(value: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_proxy_parser_does_not_normalize_dot_segments() {
+        assert!(parse_proxy_uri(
+            "https://t.me/a/../socks?server=example.com&port=1080"
+        ).is_none());
+    }
+
+    #[test]
+    fn http_proxy_parser_accepts_android_style_numeric_port_and_encoded_host() {
+        let proxy = parse_proxy_uri(
+            "https://t%2Eme:70000/socks?server=example.com&port=1080"
+        ).unwrap();
+        assert_eq!(proxy.proxy_type, 0);
+        assert_eq!(proxy.address, "example.com");
+        assert_eq!(proxy.port, 1080);
+    }
+
+    #[test]
+    fn http_proxy_parser_rejects_nonnumeric_authority_suffix() {
+        assert!(parse_proxy_uri(
+            "https://t.me:abc/socks?server=example.com&port=1080"
+        ).is_none());
+    }
 
     #[test]
     fn http_socks_without_query_matches_legacy_empty_settings() {
