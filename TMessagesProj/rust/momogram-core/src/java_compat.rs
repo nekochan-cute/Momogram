@@ -36,6 +36,62 @@ pub(crate) fn java_char_digit(ch: char, radix: u8) -> Option<u8> {
     (digit < radix).then_some(digit)
 }
 
+pub(crate) fn java_parse_i32(value: &str) -> Option<i32> {
+    let mut chars = value.chars();
+    let first = chars.next()?;
+
+    let (negative, first_digit) = match first {
+        '-' => (true, None),
+        '+' => (false, None),
+        ch => (false, Some(ch)),
+    };
+
+    let limit = if negative {
+        i32::MAX as u64 + 1
+    } else {
+        i32::MAX as u64
+    };
+    let mut parsed = 0u64;
+    let mut saw_digit = false;
+
+    let mut consume = |ch: char| -> bool {
+        let Some(digit) = java_char_digit(ch, 10) else {
+            return false;
+        };
+        let digit = digit as u64;
+        if parsed > (limit - digit) / 10 {
+            return false;
+        }
+        parsed = parsed * 10 + digit;
+        saw_digit = true;
+        true
+    };
+
+    if let Some(ch) = first_digit {
+        if !consume(ch) {
+            return None;
+        }
+    }
+    for ch in chars {
+        if !consume(ch) {
+            return None;
+        }
+    }
+    if !saw_digit {
+        return None;
+    }
+
+    if negative {
+        if parsed == i32::MAX as u64 + 1 {
+            Some(i32::MIN)
+        } else {
+            Some(-(parsed as i32))
+        }
+    } else {
+        Some(parsed as i32)
+    }
+}
+
 pub(crate) fn java_char_is_whitespace(ch: char) -> bool {
     match ch as u32 {
         0x0009..=0x000D | 0x001C..=0x001F => true,
@@ -86,6 +142,17 @@ mod tests {
         assert!(kotlin_is_blank("\u{2007}"));
         assert!(kotlin_is_blank("\u{202F}"));
         assert!(!kotlin_is_blank("\u{0085}"));
+    }
+
+    #[test]
+    fn parses_i32_like_java_and_kotlin() {
+        assert_eq!(java_parse_i32("2147483647"), Some(i32::MAX));
+        assert_eq!(java_parse_i32("-2147483648"), Some(i32::MIN));
+        assert_eq!(java_parse_i32("2147483648"), None);
+        assert_eq!(java_parse_i32("١٢٣"), Some(123));
+        assert_eq!(java_parse_i32("１２３"), Some(123));
+        assert_eq!(java_parse_i32("+５"), Some(5));
+        assert_eq!(java_parse_i32("+"), None);
     }
 
     #[test]

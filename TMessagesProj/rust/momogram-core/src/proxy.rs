@@ -1,4 +1,4 @@
-use crate::java_compat::java_char_digit;
+use crate::java_compat::{java_char_digit, java_parse_i32};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use idna::Config;
@@ -37,7 +37,7 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
         } else {
             return None;
         };
-        (proxy_type, url.query()?.to_owned())
+        (proxy_type, url.query().unwrap_or("").to_owned())
     } else if lower.starts_with("tg://") || lower.starts_with("tg:") {
         // Legacy Java first accepts the scheme case-insensitively, then checks
         // the original URI string with case-sensitive startsWith("tg:...").
@@ -60,13 +60,12 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
 
     let mut address = get("server").or_else(|| get("host")).unwrap_or_default();
     if proxy_type != 2 && check_host_for_punycode(&address) {
-        if let Some(ascii) = java_idn_to_ascii(&address, false) {
-            address = ascii;
-        }
+        address = java_idn_to_ascii(&address, false)?;
     }
 
     let port = get("port")
-        .and_then(|value| value.parse::<i32>().ok())
+        .as_deref()
+        .and_then(java_parse_i32)
         .unwrap_or(0);
     let user = get("user").unwrap_or_default();
     let password = get("pass").unwrap_or_default();
@@ -322,6 +321,32 @@ fn bytes_to_hex(value: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_socks_without_query_matches_legacy_empty_settings() {
+        let proxy = parse_proxy_uri("https://t.me/socks").unwrap();
+        assert_eq!(proxy.proxy_type, 0);
+        assert_eq!(proxy.address, "");
+        assert_eq!(proxy.port, 0);
+        assert_eq!(proxy.user, "");
+        assert_eq!(proxy.password, "");
+        assert_eq!(proxy.secret, "");
+    }
+
+    #[test]
+    fn proxy_port_parses_java_unicode_digits() {
+        let proxy = parse_proxy_uri(
+            "tg://socks?server=example.com&port=%EF%BC%91%EF%BC%90%EF%BC%98%EF%BC%90"
+        ).unwrap();
+        assert_eq!(proxy.port, 1080);
+    }
+
+    #[test]
+    fn mixed_script_idn_failure_rejects_non_web_proxy() {
+        assert!(parse_proxy_uri(
+            "tg://socks?server=a%E4%BE%8B%2Fbad&port=1080"
+        ).is_none());
+    }
 
     #[test]
     fn parses_socks_link() {
