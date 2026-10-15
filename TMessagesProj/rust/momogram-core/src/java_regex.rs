@@ -98,8 +98,8 @@ fn rewrite_default_java_syntax(pattern: &str, dotall: bool) -> String {
                 }),
                 'V' => Some("[^\\n\\x0B\\x0C\\r\\u{0085}\\u{2028}\\u{2029}]"),
                 'b' if in_class => Some("\\x08"),
-                'b' => Some("(?-u:\\b)"),
-                'B' if !in_class => Some("(?-u:\\B)"),
+                'b' => Some("(?:(?<![A-Za-z0-9_])(?=[A-Za-z0-9_])|(?<=[A-Za-z0-9_])(?![A-Za-z0-9_]))"),
+                'B' if !in_class => Some("(?:(?<=[A-Za-z0-9_])(?=[A-Za-z0-9_])|(?<![A-Za-z0-9_])(?![A-Za-z0-9_]))"),
                 'R' if !in_class => Some("(?:\\r\\n|[\\n\\x0B\\x0C\\r\\u{0085}\\u{2028}\\u{2029}])"),
                 _ => None,
             };
