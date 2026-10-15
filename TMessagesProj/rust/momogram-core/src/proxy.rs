@@ -144,6 +144,19 @@ fn android_port_separator(authority: &str) -> Option<usize> {
 
 #[allow(deprecated)]
 fn java_idn_to_ascii(host: &str, std3: bool) -> Option<String> {
+    // java.net.IDN still follows the IDNA2003/Nameprep model. When a label
+    // contains non-ASCII input, ASCII punctuation outside LDH is prohibited
+    // even without USE_STD3_ASCII_RULES. UTS #46 implementations can be more
+    // permissive here, so reject those inputs before delegating to idna.
+    if host.chars().any(|ch| !ch.is_ascii())
+        && host.chars().any(|ch| {
+            ch.is_ascii()
+                && !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.'))
+        })
+    {
+        return None;
+    }
+
     Config::default()
         .use_std3_ascii_rules(std3)
         .transitional_processing(true)
