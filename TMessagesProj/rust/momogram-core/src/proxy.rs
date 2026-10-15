@@ -34,7 +34,8 @@ pub fn parse_proxy_uri(raw: &str) -> Option<ParsedProxy> {
         } else {
             return None;
         };
-        let query = raw.split_once('?')?.1.to_owned();
+        let query = raw.split_once('?')?.1;
+        let query = query.split_once('#').map_or(query, |(head, _)| head).to_owned();
         (proxy_type, query)
     } else {
         return None;
@@ -450,6 +451,15 @@ mod tests {
         ).unwrap();
         assert_eq!(proxy.proxy_type, 0);
         assert_eq!(proxy.address, "example.com");
+    }
+
+    #[test]
+    fn tg_query_excludes_fragment_like_android_uri() {
+        let proxy = parse_proxy_uri(
+            "tg://socks?server=example.com&port=1080#fragment"
+        ).unwrap();
+        assert_eq!(proxy.address, "example.com");
+        assert_eq!(proxy.port, 1080);
     }
 
     #[test]
