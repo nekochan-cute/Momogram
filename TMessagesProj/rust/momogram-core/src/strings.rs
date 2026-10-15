@@ -1,4 +1,4 @@
-use crate::java_compat::{java_char_digit, java_is_blank};
+use crate::java_compat::{java_char_digit, java_is_blank, kotlin_is_blank};
 use fancy_regex::Regex;
 use oxixml_unicode::case::simple_uppercase;
 use unicode_bidi::{bidi_class, BidiClass};
@@ -182,7 +182,7 @@ fn expand_groups(template: &str, captures: &fancy_regex::Captures<'_>) -> Result
 }
 
 pub fn escape(content: &str) -> String {
-    if content.trim().is_empty() {
+    if java_is_blank(content) {
         return content.to_owned();
     }
     let mut out = String::with_capacity(content.len());
@@ -207,7 +207,7 @@ pub fn is_rtl(value: Option<&str>) -> bool {
 
 pub fn first_char_upper(value: Option<&str>) -> Option<String> {
     let value = value?;
-    if value.trim().is_empty() {
+    if java_is_blank(value) {
         return Some(value.to_owned());
     }
 
@@ -242,7 +242,7 @@ pub fn is_app_name(value: &str, a: &str, b: &str, c: &str) -> bool {
 pub fn append_csv(original: Option<&str>, addition: &str) -> String {
     match original {
         None => addition.to_owned(),
-        Some(value) if java_is_blank(value) => addition.to_owned(),
+        Some(value) if kotlin_is_blank(value) => addition.to_owned(),
         Some(value) => format!("{value},{addition}"),
     }
 }
@@ -331,10 +331,18 @@ mod tests {
     }
 
     #[test]
-    fn append_csv_uses_java_blank_semantics() {
+    fn append_csv_uses_kotlin_blank_semantics() {
         assert_eq!(append_csv(Some(" \t"), "x"), "x");
-        assert_eq!(append_csv(Some("\u{00A0}"), "x"), "\u{00A0},x");
+        assert_eq!(append_csv(Some("\u{00A0}"), "x"), "x");
+        assert_eq!(append_csv(Some("\u{2007}"), "x"), "x");
+        assert_eq!(append_csv(Some("\u{202F}"), "x"), "x");
         assert_eq!(append_csv(Some("\u{0085}"), "x"), "\u{0085},x");
+    }
+
+    #[test]
+    fn apache_blank_call_sites_keep_java_whitespace_semantics() {
+        assert_eq!(escape("\u{00A0}"), "\u{00A0}");
+        assert_eq!(first_char_upper(Some("\u{00A0}a")).as_deref(), Some("\u{00A0}a"));
     }
 
     #[test]

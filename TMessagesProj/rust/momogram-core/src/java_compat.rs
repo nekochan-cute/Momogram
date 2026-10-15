@@ -51,6 +51,19 @@ pub(crate) fn java_is_blank(value: &str) -> bool {
     value.is_empty() || value.chars().all(java_char_is_whitespace)
 }
 
+pub(crate) fn kotlin_char_is_whitespace(ch: char) -> bool {
+    match ch as u32 {
+        0x0009..=0x000D | 0x001C..=0x001F => true,
+        0x0020 | 0x00A0 | 0x1680 | 0x2000..=0x200A | 0x2028 | 0x2029
+        | 0x202F | 0x205F | 0x3000 => true,
+        _ => false,
+    }
+}
+
+pub(crate) fn kotlin_is_blank(value: &str) -> bool {
+    value.is_empty() || value.chars().all(kotlin_char_is_whitespace)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +76,16 @@ mod tests {
         assert!(!java_is_blank("\u{2007}"));
         assert!(!java_is_blank("\u{202F}"));
         assert!(!java_is_blank("\u{0085}"));
+    }
+
+    #[test]
+    fn mirrors_kotlin_whitespace_rules() {
+        assert!(kotlin_is_blank(" \t\n"));
+        assert!(kotlin_is_blank("\u{3000}"));
+        assert!(kotlin_is_blank("\u{00A0}"));
+        assert!(kotlin_is_blank("\u{2007}"));
+        assert!(kotlin_is_blank("\u{202F}"));
+        assert!(!kotlin_is_blank("\u{0085}"));
     }
 
     #[test]
