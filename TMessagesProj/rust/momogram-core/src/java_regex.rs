@@ -11,17 +11,19 @@ pub(crate) const CANON_EQ: i32 = 0x80;
 pub(crate) const UNICODE_CHARACTER_CLASS: i32 = 0x100;
 
 pub(crate) fn compile(pattern: &str, flags: i32) -> Result<Regex, String> {
-    if flags & (UNIX_LINES | CANON_EQ | UNICODE_CHARACTER_CLASS) != 0 {
-        return Err("Java Pattern flags are not supported by the Rust compatibility layer".to_owned());
-    }
-    if flags & CASE_INSENSITIVE != 0 && flags & UNICODE_CASE == 0 {
-        return Err("ASCII-only Java CASE_INSENSITIVE is not supported".to_owned());
+    if flags & CANON_EQ != 0 {
+        return Err("CANON_EQ is not supported on Android".to_owned());
     }
 
+    // Android always uses Unicode-aware character classes and Unicode-aware
+    // case folding. UNICODE_CASE and UNICODE_CHARACTER_CLASS are therefore
+    // no-ops there.
+    let dotall = flags & DOTALL != 0;
+    let unix_lines = flags & UNIX_LINES != 0;
     let mut body = if flags & LITERAL != 0 {
         regex::escape(pattern)
     } else {
-        rewrite_default_java_syntax(pattern, flags & DOTALL != 0)
+        rewrite_android_syntax(pattern, dotall, unix_lines)
     };
 
     let mut modifiers = String::new();
@@ -44,7 +46,7 @@ pub(crate) fn compile(pattern: &str, flags: i32) -> Result<Regex, String> {
     Regex::new(&body).map_err(|e| e.to_string())
 }
 
-fn rewrite_default_java_syntax(pattern: &str, dotall: bool) -> String {
+fn rewrite_android_syntax(pattern: &str, dotall: bool, unix_lines: bool) -> String {
     let chars: Vec<char> = pattern.chars().collect();
     let mut out = String::with_capacity(pattern.len() + 16);
     let mut i = 0usize;
@@ -79,12 +81,9 @@ fn rewrite_default_java_syntax(pattern: &str, dotall: bool) -> String {
 
             let in_class = class_depth > 0;
             let replacement = match next {
-                'd' => Some(if in_class { "0-9" } else { "[0-9]" }),
-                'D' => Some("[^0-9]"),
-                's' => Some(if in_class { " \\t\\n\\x0B\\x0C\\r" } else { "[ \\t\\n\\x0B\\x0C\\r]" }),
-                'S' => Some("[^ \\t\\n\\x0B\\x0C\\r]"),
-                'w' => Some(if in_class { "A-Za-z0-9_" } else { "[A-Za-z0-9_]" }),
-                'W' => Some("[^A-Za-z0-9_]"),
+                // Android's Pattern always uses Unicode-aware \\d/\\s/\\w and
+                // word boundaries. fancy-regex delegates those constructs to
+                // regex, whose Unicode classes follow the same UTS #18 model.
                 'h' => Some(if in_class {
                     " \\t\\u{00A0}\\u{1680}\\u{180E}\\u{2000}-\\u{200A}\\u{202F}\\u{205F}\\u{3000}"
                 } else {
@@ -98,8 +97,6 @@ fn rewrite_default_java_syntax(pattern: &str, dotall: bool) -> String {
                 }),
                 'V' => Some("[^\\n\\x0B\\x0C\\r\\u{0085}\\u{2028}\\u{2029}]"),
                 'b' if in_class => Some("\\x08"),
-                'b' => Some("(?:(?<![A-Za-z0-9_])(?=[A-Za-z0-9_])|(?<=[A-Za-z0-9_])(?![A-Za-z0-9_]))"),
-                'B' if !in_class => Some("(?:(?<=[A-Za-z0-9_])(?=[A-Za-z0-9_])|(?<![A-Za-z0-9_])(?![A-Za-z0-9_]))"),
                 'R' if !in_class => Some("(?:\\r\\n|[\\n\\x0B\\x0C\\r\\u{0085}\\u{2028}\\u{2029}])"),
                 _ => None,
             };
@@ -128,7 +125,11 @@ fn rewrite_default_java_syntax(pattern: &str, dotall: bool) -> String {
         }
 
         if ch == '.' && class_depth == 0 && !dotall {
-            out.push_str("[^\\n\\r\\u{0085}\\u{2028}\\u{2029}]");
+            if unix_lines {
+                out.push_str("[^\\n]");
+            } else {
+                out.push_str("[^\\n\\x0B\\x0C\\r\\u{0085}\\u{2028}\\u{2029}]");
+            }
         } else {
             out.push(ch);
         }
@@ -143,52 +144,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn java_default_perl_classes_are_ascii() {
+    fn android_predefined_classes_are_unicode_aware() {
         let digits = compile(r"^\d+$", 0).unwrap();
         assert!(digits.is_match("123").unwrap());
-        assert!(!digits.is_match("１２３").unwrap());
+        assert!(digits.is_match("１２３").unwrap());
 
         let words = compile(r"^\w+$", 0).unwrap();
         assert!(words.is_match("abc_123").unwrap());
-        assert!(!words.is_match("é").unwrap());
+        assert!(words.is_match("é").unwrap());
 
         let spaces = compile(r"^\s+$", 0).unwrap();
         assert!(spaces.is_match(" \t\r\n").unwrap());
-        assert!(!spaces.is_match("\u{00A0}").unwrap());
+        assert!(spaces.is_match("\u{00A0}").unwrap());
     }
 
     #[test]
-    fn java_default_dot_excludes_all_java_line_terminators() {
+    fn android_default_dot_excludes_all_line_terminators() {
         let dot = compile(r"^.$", 0).unwrap();
         assert!(dot.is_match("x").unwrap());
-        assert!(!dot.is_match("\r").unwrap());
-        assert!(!dot.is_match("\u{0085}").unwrap());
-        assert!(!dot.is_match("\u{2028}").unwrap());
-        assert!(!dot.is_match("\u{2029}").unwrap());
+        for line in ["\n", "\u{000B}", "\u{000C}", "\r", "\u{0085}", "\u{2028}", "\u{2029}"] {
+            assert!(!dot.is_match(line).unwrap(), "{line:?}");
+        }
 
         let dotall = compile(r"^.$", DOTALL).unwrap();
         assert!(dotall.is_match("\u{2028}").unwrap());
+
+        let unix = compile(r"^.$", UNIX_LINES).unwrap();
+        assert!(unix.is_match("\r").unwrap());
+        assert!(!unix.is_match("\n").unwrap());
     }
 
     #[test]
-    fn java_quote_escape_is_literal() {
+    fn android_case_insensitive_is_unicode_aware_without_unicode_case() {
+        let regex = compile("ä", CASE_INSENSITIVE).unwrap();
+        assert!(regex.is_match("Ä").unwrap());
+
+        let same = compile("ä", CASE_INSENSITIVE | UNICODE_CASE | UNICODE_CHARACTER_CLASS).unwrap();
+        assert!(same.is_match("Ä").unwrap());
+    }
+
+    #[test]
+    fn android_quote_escape_is_literal() {
         let quoted = compile(r"\Qa.b[0]\E", 0).unwrap();
         assert!(quoted.is_match("a.b[0]").unwrap());
         assert!(!quoted.is_match("axb0").unwrap());
     }
 
     #[test]
-    fn java_classes_work_inside_character_classes() {
-        let digits = compile(r"^[\d_]+$", 0).unwrap();
-        assert!(digits.is_match("1_2").unwrap());
-        assert!(!digits.is_match("１").unwrap());
+    fn android_extra_whitespace_and_linebreak_constructs_work() {
+        assert!(compile(r"^\h$", 0).unwrap().is_match("\u{00A0}").unwrap());
+        assert!(compile(r"^\v$", 0).unwrap().is_match("\u{2028}").unwrap());
+        assert!(compile(r"^\R$", 0).unwrap().is_match("\r\n").unwrap());
     }
 
     #[test]
-    fn java_word_boundaries_are_ascii() {
-        let boundary = compile(r"\bé\b", 0).unwrap();
-        assert!(!boundary.is_match("é").unwrap());
-        let ascii = compile(r"\ba\b", 0).unwrap();
-        assert!(ascii.is_match("a").unwrap());
+    fn canon_eq_is_rejected_like_android() {
+        assert!(compile("abc", CANON_EQ).is_err());
     }
 }
