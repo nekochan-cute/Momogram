@@ -179,7 +179,9 @@ fn parse_url(src: &str) -> Option<ParsedUrl<'_>> {
         None => (without_fragment, None),
     };
 
-    let authority_end = without_query.find('/').unwrap_or(without_query.len());
+    let authority_end = without_query
+        .find(|ch| ch == '/' || ch == '\\')
+        .unwrap_or(without_query.len());
     let authority = &without_query[..authority_end];
     let path = if authority_end < without_query.len() {
         &without_query[authority_end..]
@@ -362,6 +364,18 @@ mod tests {
         assert_eq!(
             clean_url("https://example.com/a?foo=1&utm_source=x&clid=2&secret=3&bar=4#frag", true, &["secret"]),
             "https://example.com/a?foo=1&bar=4#frag"
+        );
+    }
+
+    #[test]
+    fn backslash_starts_path_like_android_uri() {
+        assert_eq!(
+            clean_url("https://example.com\\path?x=1", true, &[]),
+            "https://example.com/\\path?x=1"
+        );
+        assert_eq!(
+            clean_url("https://twitter.com\\user?x=1", true, &[]),
+            "https://twitter.com/%5Cuser"
         );
     }
 
