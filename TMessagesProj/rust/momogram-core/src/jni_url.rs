@@ -54,7 +54,13 @@ pub extern "system" fn Java_moe_hx030_momogram_utils_RustCore_nativeStripAllQuer
     src: JString,
 ) -> jstring {
     match get_string(&mut env, &src) {
-        Ok(src) => new_string(&mut env, url::strip_all_queries(&src)),
+        Ok(src) => match url::strip_all_queries(&src) {
+            Ok(value) => new_string(&mut env, value),
+            Err(err) => {
+                let _ = env.throw_new("java/lang/StringIndexOutOfBoundsException", err);
+                ptr::null_mut()
+            }
+        },
         Err(err) => throw_and_null_string(&mut env, err),
     }
 }

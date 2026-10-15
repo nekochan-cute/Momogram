@@ -27,8 +27,10 @@ pub fn is_twitter_preview(host: &str) -> bool {
     TWITTER_PREVIEW_DOMAINS.contains(&host)
 }
 
-pub fn strip_all_queries(src: &str) -> String {
-    src.rsplit_once('?').map(|(head, _)| head.to_owned()).unwrap_or_else(|| src.to_owned())
+pub fn strip_all_queries(src: &str) -> Result<String, String> {
+    src.rsplit_once('?')
+        .map(|(head, _)| head.to_owned())
+        .ok_or_else(|| "String index out of range: -1".to_owned())
 }
 
 pub fn clean_url(src: &str, patch_links: bool, custom_blacklist: &[&str]) -> String {
@@ -327,8 +329,11 @@ mod tests {
 
     #[test]
     fn strip_all_queries_matches_legacy_last_question_mark_behavior() {
-        assert_eq!(super::strip_all_queries("https://example.com/a?x=?y"), "https://example.com/a?x=");
-        assert_eq!(super::strip_all_queries("https://example.com/a"), "https://example.com/a");
+        assert_eq!(
+            super::strip_all_queries("https://example.com/a?x=?y").unwrap(),
+            "https://example.com/a?x="
+        );
+        assert!(super::strip_all_queries("https://example.com/a").is_err());
     }
 
     #[test]
