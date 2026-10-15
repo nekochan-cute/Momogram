@@ -227,10 +227,13 @@ pub fn randomize_file_name(name: &str) -> Result<String, String> {
 }
 
 fn android_regex_digit(ch: char) -> bool {
-    static DIGIT: Lazy<regex::Regex> =
-        Lazy::new(|| regex::Regex::new(r"^\d$").expect("static Unicode digit regex"));
+    static DIGIT: Lazy<Result<regex::Regex, regex::Error>> =
+        Lazy::new(|| regex::Regex::new(r"^\d$"));
+    let Ok(regex) = DIGIT.as_ref() else {
+        return false;
+    };
     let mut buf = [0u8; 4];
-    DIGIT.is_match(ch.encode_utf8(&mut buf))
+    regex.is_match(ch.encode_utf8(&mut buf))
 }
 
 pub fn mention_ranges(text: &str) -> Vec<i32> {

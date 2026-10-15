@@ -2,9 +2,7 @@ use crate::java_compat::{java_char_digit, java_parse_i32};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use idna::Config;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
 
 const WEB_PROXY_PATH_SECRET_MARKER: u8 = 0x70;
 
@@ -292,20 +290,25 @@ fn hex_nibble(value: u8) -> Option<u8> {
     }
 }
 
-fn path_regex() -> &'static Regex {
-    static PATH: OnceLock<Regex> = OnceLock::new();
-    PATH.get_or_init(|| {
-        Regex::new(r"^[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_-]*)*$").unwrap()
+pub fn is_valid_web_proxy_path(path: &str) -> bool {
+    if path.len() > 128 {
+        return false;
+    }
+    path.split('/').all(|segment| {
+        let mut bytes = segment.bytes();
+        let Some(first) = bytes.next() else {
+            return false;
+        };
+        first.is_ascii_alphanumeric()
+            && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
     })
 }
 
-fn marked_secret_regex() -> &'static Regex {
-    static SECRET: OnceLock<Regex> = OnceLock::new();
-    SECRET.get_or_init(|| Regex::new(r"^[A-Za-z0-9_-]+$").unwrap())
-}
-
-pub fn is_valid_web_proxy_path(path: &str) -> bool {
-    path.len() <= 128 && path_regex().is_match(path)
+fn is_marked_secret_syntax(secret: &str) -> bool {
+    !secret.is_empty()
+        && secret
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 pub fn is_valid_web_proxy_secret(secret: &str) -> bool {
@@ -324,7 +327,7 @@ pub fn is_valid_web_proxy_secret(secret: &str) -> bool {
 }
 
 pub fn decode_marked_web_proxy_secret(secret: &str) -> Option<String> {
-    if secret.is_empty() || !marked_secret_regex().is_match(secret) {
+    if !is_marked_secret_syntax(secret) {
         return None;
     }
     let marked = URL_SAFE_NO_PAD.decode(secret).ok()?;
